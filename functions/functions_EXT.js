@@ -5,7 +5,6 @@ const axios = require('axios');
 const createSapRfcPool = require('../connections/sap/connection_SAP');
 const dbB10 = require('../connections/db/connection_b10');
 const dbBartender = require('../connections/db/connection_bartender');
-const dbBartenderExt = require('../connections/db/connection_bartender_ext');
 const dbEX = require('../connections/db/connection_extr');
 const dbC = require('../connections/db/connection_cycle');
 
@@ -41,7 +40,7 @@ funcion.getPrinter = async (station) => {
 
 funcion.materialEXT = async (material) => {
     try {
-        const result = await dbBartenderExt(`
+        const result = await dbBartender(`
             SELECT
                 *
             FROM
