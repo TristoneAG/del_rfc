@@ -1,7 +1,9 @@
-const Pool = require("node-rfc").Pool;
-const retry = require("retry");
+const { log } = require('async');
+const genericPool = require('generic-pool');
+const rfc = require('node-rfc');
 
-const abapSystem = {
+const sapConfig = {
+  // Your SAP system configuration
   user: process.env.RFC_USER,
   passwd: process.env.RFC_PASSWD,
   ashost: process.env.RFC_ASHOST,
@@ -10,38 +12,39 @@ const abapSystem = {
   lang: process.env.RFC_LANG,
 };
 
-function createSapRfcPool() {
-  return new Pool({
-    connectionParameters: abapSystem,
-    clientOptions: {},
-    poolOptions: { low: 0, high: 15 },
-  });
-}
-
-let node_RFC = createSapRfcPool();
-
-async function ensureSapConnection() {
-  const retry_operation = retry.operation({
-    retries: 360,
-    minTimeout: 10000,
-  });
-
-  return new Promise((resolve, reject) => {
-    retry_operation.attempt(async function (currentAttempt) {
-      try {
-        const client = await node_RFC.acquire();
-        client.release();
-        resolve(node_RFC);
-      } catch (error) {
-        console.error(`Attempt ${currentAttempt}: Error acquiring connection from SAP pool:`, error);
-        node_RFC = createSapRfcPool();
-        if (retry_operation.retry(error)) {
-          return;
+const factory = {
+  create: function () {
+    return new Promise((resolve, reject) => {
+      const client = new rfc.Client(sapConfig);
+      client.connect((err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(client);
         }
-        reject(retry_operation.mainError());
-      }
+      });
     });
-  });
-}
+  },
+  destroy: function (client) {
+    return new Promise((resolve, reject) => {
+      client.close((err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+};
 
-module.exports = ensureSapConnection;
+const opts = {
+  max: 10, // maximum size of the pool
+  min: 1  // minimum size of the pool
+};
+
+const sapRfcPool = genericPool.createPool(factory, opts);
+
+
+
+module.exports = sapRfcPool;
