@@ -3,8 +3,6 @@ const funcion = require('../functions/functions_VUL');
 const controller = {};
 
 controller.handlingVUL_POST = async (req, res) => {
-
-    console.log(req.body);
     try {
         let station = req.body.station
         let material = req.body.material
@@ -41,9 +39,7 @@ controller.handlingVUL_POST = async (req, res) => {
 
 
 controller.postVUL_POST = async (req, res) => {
-    console.log(req.body);
     try {
-
         let station = req.body.station
         let serial_num = req.body.serial_num
         let material = req.body.material
@@ -220,35 +216,31 @@ controller.consultaVulProductionStock_POST = async (req, res) => {
 
 
 controller.auditoriaVUL_POST = async (req, res) => {
-
     try {
         let serial = req.body.serial;
         let serials_array = serial.split(",");
-        let estacion = req.body.station
-        let storage_type
-        let storage_bin
+        let estacion = req.body.station;
+        let storage_type;
+        let storage_bin;
+        
         const resultSL = await funcion.getStorageLocation(estacion);
-        if (resultSL.length === 0) { return res.json({ key: `Storage Location not set for device "${estacion}"` }) }
-
-        let storage_location = resultSL[0].storage_location
-
+        if (resultSL.length === 0) {return res.json({ key: `Storage Location not set for device "${estacion}"` });}
+        let storage_location = resultSL[0].storage_location;
 
         if (storage_location == "0012") {
-            storage_type = "102"
-            storage_bin = "103"
+            storage_type = "102";
+            storage_bin = "103";
         }
         if (storage_location == "0002") {
-            storage_type = "100"
-            storage_bin = "101"
+            storage_type = "100";
+            storage_bin = "101";
         }
-
-        let promises = serials_array.map(serial_ =>
-            funcion.sapRFC_transferVULProd(serial_, storage_location, storage_type, storage_bin)
-        );
-
-        const results = await Promise.all(promises);
-
-        res.json(results)
+        let results = [];
+        for (let i = 0; i < serials_array.length; i++) {
+            const result = await funcion.sapRFC_transferVULProd(serials_array[i], storage_location, storage_type, storage_bin);
+            results.push(result);
+        }
+        res.json(results);
     } catch (err) {
         res.json(err);
     }
@@ -322,30 +314,35 @@ controller.transferVUL_Confirmed_POST = async (req, res) => {
     let max_storage_unit_bin = 5
 
     let serials_array = serial.split(",")
-    let promises = [];
     let errorsArray = [];
+    let resultsArray = [];
 
-
-    const result_getStorageLocation = await funcion.getStorageLocation(estacion);
-    const binExists = await funcion.sapRFC_SbinOnStypeExists("VUL", storage_bin)
-
-    if (binExists.length === 0) {
-        res.json([{ "key": `Storage Bin ${storage_bin} not found in Storage Type VUL`, "abapMsgV1": "ALL" }]);
-    } else {
-        const innerPromises = serials_array.map(async (serial_) => {
-            const result_consultaStorageUnit = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial_, 20));
-            if (result_consultaStorageUnit.length === 0) {
-                errorsArray.push({ "key": `Check SU ${serial_}`, "abapMsgV1": `${serial_}` });
-            } else if (result_consultaStorageUnit[0].LGORT !== result_getStorageLocation[0].storage_location) {
-                errorsArray.push({ "key": `SU ${serial_} is in a different storage location`, "abapMsgV1": `${serial_}` });
-            } else {
-                promises.push(await funcion.sapRFC_transferVul(serial_, storage_bin))
+    try {
+        const result_getStorageLocation = await funcion.getStorageLocation(estacion);
+        const binExists = await funcion.sapRFC_SbinOnStypeExists("VUL", storage_bin)
+        const result_consultaStorageBin = await funcion.sapRFC_consultaStorageBin(result_getStorageLocation[0].storage_location, "VUL", storage_bin);
+        let serials_bin = serials_array.length + result_consultaStorageBin.length
+        if (binExists.length === 0) {
+            res.json([{ "key": `Storage Bin ${storage_bin} not found in Storage Type VUL`, "abapMsgV1": "ALL" }]);
+        } else if (storage_bin[0] == "r" || storage_bin[0] == "R" && serials_bin > max_storage_unit_bin) {
+            res.json([{ "key": `Exceeded amount of Storage Units per Bin: ${serials_bin - max_storage_unit_bin}` }]);
+        } else {
+            for (const serial_ of serials_array) {
+                const result_consultaStorageUnit = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial_, 20));
+                if (result_consultaStorageUnit.length === 0) {
+                    errorsArray.push({ "key": `Check SU ${serial_}`, "abapMsgV1": `${serial_}` });
+                } else if (result_consultaStorageUnit[0].LGORT !== result_getStorageLocation[0].storage_location) {
+                    errorsArray.push({ "key": `SU ${serial_} is in a different storage location`, "abapMsgV1": `${serial_}` });
+                } else {
+                    const result = await funcion.sapRFC_transferVul(serial_, storage_bin);
+                    resultsArray.push(result);
+                }
             }
-        });
-        await Promise.all(innerPromises);
-        await Promise.all(promises);
-        const newArray = promises.concat(errorsArray);
-        res.json(newArray);
+            const newArray = resultsArray.concat(errorsArray);
+            res.json(newArray);
+        }
+    } catch (err) {
+        res.json(err)
     }
 }
 
@@ -376,77 +373,167 @@ controller.getBinStatusReportVUL_POST = async (req, res) => {
     }
 };
 
+// controller.postCycleSUVUL_POST = async (req, res) => {
+//     let storage_bin = req.body.storage_bin
+//     let user_id = req.body.user_id
+//     let storage_type = req.body.storage_type
+//     let listed_storage_units = req.body.listed_storage_units == '' ? [] : req.body.listed_storage_units.split(",")
+//     let unlisted_storage_units = req.body.unlisted_storage_units == '' ? [] : req.body.unlisted_storage_units.split(",")
+//     let not_found_storage_units = req.body.not_found_storage_units == '' ? [] : req.body.not_found_storage_units.split(",")
+//     let st = ""
+//     let sb = ""
+//     let listed_storage_units_promises = []
+//     let unlisted_storage_units_promises = []
+//     let not_found_storage_units_promises = []
+//     let estacion = req.body.estacion
+
+//     switch (storage_type) {
+//         case "VUL":
+//             st = storage_type
+//             sb = "CICLICOVUL"
+//             break;
+//         default:
+//             res.json(JSON.stringify({ "key": `Storage Type: "${storage_type}" not configured for Cycle Control` }))
+//             break;
+//     }
+
+//     const resultSL = await funcion.getStorageLocation(estacion);
+
+//     if (resultSL.length === 0) {
+//         return res.json({ key: `Storage Location not set for device "${estacion}"` });
+//     }
+
+//     let storage_location = resultSL[0].storage_location
+
+
+//     if (listed_storage_units.length > 0) {
+//         listed_storage_units.forEach(element => {
+//             listed_storage_units_promises.push(funcion.dBinsert_cycle_Listed_storage_units(storage_type, storage_bin.toUpperCase(), [element], user_id)
+//                 .catch((err) => { return err }))
+//         })
+//     }
+
+//     if (not_found_storage_units.length > 0) {
+//         not_found_storage_units.forEach(element => {
+//             not_found_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, st, sb)
+//                 .catch((err) => { return err }))
+//         })
+
+//     }
+
+//     if (unlisted_storage_units.length > 0) {
+//         unlisted_storage_units.forEach(element => {
+//             unlisted_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, storage_type, storage_bin)
+//                 .catch((err) => { return err }))
+//         })
+//     }
+
+
+//     if (listed_storage_units.length == 0 && unlisted_storage_units.length == 0 && not_found_storage_units.length == 0) {
+//         funcion.dBinsert_cycle_result(storage_type, storage_bin, "", user_id, "OK-BIN", "")
+//     }
+
+//     const lsup = Promise.all(listed_storage_units_promises)
+//     const nfsup = Promise.all(not_found_storage_units_promises)
+//     const usup = Promise.all(unlisted_storage_units_promises)
+//     let response_list = []
+//     Promise.all([lsup, nfsup, usup])
+//         .then(result => {
+//             let lsup_result = result[0]
+//             let nfsup_result = result[1]
+//             let usup_result = result[2]
+
+//             nfsup_result.forEach(element => {
+//                 if (element.key) {
+//                     response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
+//                     funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "NOSCAN-ERROR", element.key)
+//                 } else {
+//                     response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
+//                     funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "NOSCAN", element.E_TANUM)
+//                 }
+
+//             })
+
+//             usup_result.forEach(element => {
+//                 if (element.key) {
+//                     response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
+//                     funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "WRONGBIN-ERROR", element.key)
+//                 } else {
+//                     response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
+//                     funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "WRONGBIN", element.E_TANUM)
+//                 }
+//             })
+
+//             res.json(response_list)
+//         })
+//         .catch(err => { })
+// }
+
 controller.postCycleSUVUL_POST = async (req, res) => {
-    let storage_bin = req.body.storage_bin
-    let user_id = req.body.user_id
-    let storage_type = req.body.storage_type
-    let listed_storage_units = req.body.listed_storage_units == '' ? [] : req.body.listed_storage_units.split(",")
-    let unlisted_storage_units = req.body.unlisted_storage_units == '' ? [] : req.body.unlisted_storage_units.split(",")
-    let not_found_storage_units = req.body.not_found_storage_units == '' ? [] : req.body.not_found_storage_units.split(",")
-    let st = ""
-    let sb = ""
-    let listed_storage_units_promises = []
-    let unlisted_storage_units_promises = []
-    let not_found_storage_units_promises = []
-    let estacion = req.body.estacion
+    try {
+        let storage_bin = req.body.storage_bin
+        let user_id = req.body.user_id
+        let storage_type = req.body.storage_type
+        let listed_storage_units = req.body.listed_storage_units == '' ? [] : req.body.listed_storage_units.split(",")
+        let unlisted_storage_units = req.body.unlisted_storage_units == '' ? [] : req.body.unlisted_storage_units.split(",")
+        let not_found_storage_units = req.body.not_found_storage_units == '' ? [] : req.body.not_found_storage_units.split(",")
+        let st = ""
+        let sb = ""
+        let listed_storage_units_promises = []
+        let unlisted_storage_units_promises = []
+        let not_found_storage_units_promises = []
+        let response_list = []
+        let estacion = req.body.estacion
 
-    switch (storage_type) {
-        case "VUL":
-            st = storage_type
-            sb = "CICLICOVUL"
-            break;
-        default:
-            res.json(JSON.stringify({ "key": `Storage Type: "${storage_type}" not configured for Cycle Control` }))
-            break;
-    }
+        switch (storage_type) {
+            case "VUL":
+                st = storage_type
+                sb = "CICLICOVUL"
+                break;
+            default:
+                res.json(JSON.stringify({ "key": `Storage Type: "${storage_type}" not configured for Cycle Control` }))
+                break;
+        }
 
-    const resultSL = await funcion.getStorageLocation(estacion);
+        const resultSL = await funcion.getStorageLocation(estacion);
 
-    if (resultSL.length === 0) {
-        return res.json({ key: `Storage Location not set for device "${estacion}"` });
-    }
+        if (resultSL.length === 0) {
+            return res.json({ key: `Storage Location not set for device "${estacion}"` });
+        }
 
-    let storage_location = resultSL[0].storage_location
-
-
-    if (listed_storage_units.length > 0) {
-        listed_storage_units.forEach(element => {
-            listed_storage_units_promises.push(funcion.dBinsert_cycle_Listed_storage_units(storage_type, storage_bin.toUpperCase(), [element], user_id)
-                .catch((err) => { return err }))
-        })
-    }
-
-    if (not_found_storage_units.length > 0) {
-        not_found_storage_units.forEach(element => {
-            not_found_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, st, sb)
-                .catch((err) => { return err }))
-        })
-
-    }
-
-    if (unlisted_storage_units.length > 0) {
-        unlisted_storage_units.forEach(element => {
-            unlisted_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, storage_type, storage_bin)
-                .catch((err) => { return err }))
-        })
-    }
+        let storage_location = resultSL[0].storage_location
 
 
-    if (listed_storage_units.length == 0 && unlisted_storage_units.length == 0 && not_found_storage_units.length == 0) {
-        funcion.dBinsert_cycle_result(storage_type, storage_bin, "", user_id, "OK-BIN", "")
-    }
+        if (listed_storage_units.length > 0) {
+            listed_storage_units.forEach(element => {
+                listed_storage_units_promises.push(funcion.dBinsert_cycle_Listed_storage_units(storage_type, storage_bin.toUpperCase(), [element], user_id)
+                    .catch((err) => { return err }))
+            })
+        }
 
-    const lsup = Promise.all(listed_storage_units_promises)
-    const nfsup = Promise.all(not_found_storage_units_promises)
-    const usup = Promise.all(unlisted_storage_units_promises)
-    let response_list = []
-    Promise.all([lsup, nfsup, usup])
-        .then(result => {
-            let lsup_result = result[0]
-            let nfsup_result = result[1]
-            let usup_result = result[2]
+        if (not_found_storage_units.length > 0) {
+            not_found_storage_units.forEach(element => {
+                not_found_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, st, sb)
+                    .catch((err) => { return err }))
+            })
 
-            nfsup_result.forEach(element => {
+        }
+
+        if (unlisted_storage_units.length > 0) {
+            unlisted_storage_units.forEach(element => {
+                unlisted_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, storage_type, storage_bin)
+                    .catch((err) => { return err }))
+            })
+        }
+
+
+        if (listed_storage_units.length == 0 && unlisted_storage_units.length == 0 && not_found_storage_units.length == 0) {
+            funcion.dBinsert_cycle_result(storage_type, storage_bin, "", user_id, "OK-BIN", "")
+        }
+
+        for (let i = 0; i < not_found_storage_units_promises.length; i++) {
+            try {
+                const element = await not_found_storage_units_promises[i];
                 if (element.key) {
                     response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
                     funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "NOSCAN-ERROR", element.key)
@@ -454,10 +541,14 @@ controller.postCycleSUVUL_POST = async (req, res) => {
                     response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
                     funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "NOSCAN", element.E_TANUM)
                 }
+            } catch (err) {
+                // Handle error
+            }
+        }
 
-            })
-
-            usup_result.forEach(element => {
+        for (let i = 0; i < unlisted_storage_units_promises.length; i++) {
+            try {
+                const element = await unlisted_storage_units_promises[i];
                 if (element.key) {
                     response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
                     funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "WRONGBIN-ERROR", element.key)
@@ -465,11 +556,15 @@ controller.postCycleSUVUL_POST = async (req, res) => {
                     response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
                     funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "WRONGBIN", element.E_TANUM)
                 }
-            })
+            } catch (err) {
+                // Handle error
+            }
+        }
 
-            res.json(response_list)
-        })
-        .catch(err => { })
+        res.json(response_list);
+    } catch (err) {
+        res.json(err)
+    }
 }
 
 module.exports = controller;

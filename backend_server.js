@@ -1,33 +1,34 @@
 require('dotenv').config('../.env')
 const express = require('express')
-const bodyParser = require('body-parser')
 const app = express()
 const morgan = require('morgan')
-app.use(morgan('dev')) // Morgan needs to be before the routes declaration
 
-const routes_VUL = require('./routes/routes_VUL')
+// Validate environment variables
+if (!process.env.BACKEND_PORT) { console.error('Missing environment variable: BACKEND_PORT'); process.exit(1);}
+const portNumber = process.env.BACKEND_PORT || process.env.BACKEND_PORT || 5000
+
+app.use(morgan('dev')) // Morgan needs to be before the routes declaration
+app.use(express.urlencoded({ extended: true }))
+app.use(express.json())
+
 const routes_EXT = require('./routes/routes_EXT')
+const routes_VUL = require('./routes/routes_VUL')
 const routes_SEM = require('./routes/routes_SEM')
 const routes_RW = require('./routes/routes_RW')
 
-const portNumber = process.env.port || process.env.PORT || 5000
-
-app.use(bodyParser.urlencoded({ extended: true }))
-app.use(bodyParser.json())
-
-app.use(routes_VUL)
 app.use(routes_EXT)
+app.use(routes_VUL)
 app.use(routes_SEM)
 app.use(routes_RW)
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
+});
 
 let server = app.listen(portNumber, function () {
   console.info('Express node_env: ' + process.env.NODE_ENV + " Port: " + server.address().port);
   server.on('connection', () => { server.setTimeout(20 * 60 * 1000) })
 })
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-  // Handle the rejection or log the error
-  // This is a global handler for unhandled rejections
-});

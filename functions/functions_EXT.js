@@ -158,7 +158,7 @@ funcion.sapRFC_HUEXT = async (storage_location, material, cantidad) => {
         const result_packing_object = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'PACKKP',
             DELIMITER: ",",
-            OPTIONS: [{ TEXT: `POBJID EQ 'UC${material}'` }],
+            OPTIONS: [{ TEXT: `POBJID EQ 'UC${material.toUpperCase()}'` }],
             FIELDS: ['PACKNR']
         });
 
@@ -187,9 +187,9 @@ funcion.sapRFC_HUEXT = async (storage_location, material, cantidad) => {
             }],
         });
 
-        const result_commit = await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
+        await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
 
-        const result_hu_change_header = await managed_client.call('BAPI_HU_CHANGE_HEADER', {
+        await managed_client.call('BAPI_HU_CHANGE_HEADER', {
             HUKEY: result_hu_create.HUKEY,
             HUCHANGED: {
                 CLIENT: '200',
@@ -199,14 +199,14 @@ funcion.sapRFC_HUEXT = async (storage_location, material, cantidad) => {
             },
         });
 
-        const result_commit2 = await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
+        await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
 
         return result_hu_create
     } catch (err) {
         await createSapRfcPool.destroy(managed_client);
         return err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -246,7 +246,7 @@ funcion.sapRFC_consultaStorageUnit = async (storage_unit) => {
         await createSapRfcPool.destroy(managed_client);
         throw error;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 };
 
@@ -267,11 +267,11 @@ funcion.sapRFC_transferExtRP = async (serial, storage_type, storage_bin) => {
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
-funcion.sapRFC_consultaMaterial_EXT = async (material_number, storage_location, storage_type, storage_bin) => {
+funcion.sapRFC_consultaMaterial_EXT = async (material_number, storage_type, storage_bin) => {
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
@@ -291,7 +291,7 @@ funcion.sapRFC_consultaMaterial_EXT = async (material_number, storage_location, 
         await createSapRfcPool.destroy(managed_client);
         throw error;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -318,7 +318,7 @@ funcion.sapRFC_transferEXTPR_1 = async (material, cantidad, fromStorageLocation,
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -344,7 +344,7 @@ funcion.sapRFC_transferEXTPR_2 = async (material, cantidad, toStorageLocation) =
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -387,8 +387,8 @@ funcion.sapRFC_transferEXTProd = async (serial, storage_location, storage_type, 
         } else if (res[0].LGORT !== storage_location) {
             return ({ "key": "Storage Locations do not match", "abapMsgV1": `${serial}` });
         } else {
-            managed_client = await createSapRfcPool.acquire();
-            const result = await managed_client2.call('L_TO_CREATE_MOVE_SU', {
+            
+            const result = await managed_client.call('L_TO_CREATE_MOVE_SU', {
                 I_LENUM: `${funcion.addLeadingZeros(serial, 20)}`,
                 I_BWLVS: '998',
                 I_LETYP: 'IP',
@@ -402,7 +402,7 @@ funcion.sapRFC_transferEXTProd = async (serial, storage_location, storage_type, 
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; 
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -427,7 +427,7 @@ funcion.sapRFC_consultaMaterial_ST = async (material_number, storage_location, s
         await createSapRfcPool.destroy(managed_client);
         throw error;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -464,7 +464,7 @@ funcion.sapRFC_consultaMaterial = async (material_number, storage_location) => {
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 };
 
@@ -487,7 +487,7 @@ funcion.sapRFC_SbinOnStypeExists = async (storage_type, storage_bin) => {
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 };
 
@@ -524,7 +524,7 @@ funcion.sapRFC_consultaStorageBin = async (storage_location, storage_type, stora
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -545,13 +545,12 @@ funcion.sapRFC_transferExt = async (serial, storage_bin) => {
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; ;
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
 funcion.sapRFC_transferSlocCheck = async (serial, storage_location, storage_type, storage_bin) => {
     let managed_client
-    let managed_client2
     try {
         managed_client = await createSapRfcPool.acquire();
 
@@ -580,17 +579,14 @@ funcion.sapRFC_transferSlocCheck = async (serial, storage_location, storage_type
                 I_NLBER: '001',
                 I_NLPLA: storage_bin.toUpperCase()
             };
-            managed_client = await createSapRfcPool.acquire();
-            const result = await managed_client2.call('L_TO_CREATE_MOVE_SU', inputParameters);
+            const result = await managed_client.call('L_TO_CREATE_MOVE_SU', inputParameters);
             return result;
         }
     } catch (err) {
         await createSapRfcPool.destroy(managed_client);
-        await createSapRfcPool.destroy(managed_client2);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; 
-        if (managed_client2.alive) { await createSapRfcPool.release(managed_client2)}; 
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500); 
     }
 };
 
@@ -609,7 +605,7 @@ funcion.backflushEXT = async (serial) => {
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; 
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 }
 
@@ -670,7 +666,7 @@ funcion.sapRFC_transferVul_TR = async (serial_num, quantity, storage_type, stora
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)}; 
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 };
 
@@ -720,7 +716,7 @@ funcion.sapRFC_HUDETAIL = async (hu_number) => {
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client.alive) { await createSapRfcPool.release(managed_client)};
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 };
 

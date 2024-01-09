@@ -1,4 +1,3 @@
-const { log } = require('async');
 const genericPool = require('generic-pool');
 const rfc = require('node-rfc');
 
@@ -35,16 +34,30 @@ const factory = {
         }
       });
     });
+  },
+  validate: function(client) {
+    return new Promise((resolve) => {
+      client.invoke('RFC_SYSTEM_INFO', {}, (err) => {
+        if (err) {
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    });
   }
 };
 
 const opts = {
-  max: 10, // maximum size of the pool
-  min: 1  // minimum size of the pool
+  max: 100, // maximum size of the pool
+  min: 10,  // minimum size of the pool
+  testOnBorrow: true, // validate resources before giving them to clients
+  idleTimeoutMillis: 600000, // remove resources which are idle for more than 10 minutes
+  evictionRunIntervalMillis: 60000, // check for idle resources every minute
 };
 
-const sapRfcPool = genericPool.createPool(factory, opts);
-
-
+let sapRfcPool = genericPool.createPool(factory, opts);
+sapRfcPool.on('factoryCreateError', (err) => console.error('⚠️ SAP RFC Pool Create Error: ', err));
+sapRfcPool.on('factoryDestroyError', (err) => console.error('⚠️ SAP RFC Pool Destroy Error: ', err));
 
 module.exports = sapRfcPool;

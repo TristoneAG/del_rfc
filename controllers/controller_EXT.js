@@ -7,11 +7,8 @@ controller.handlingEXT_POST = async (req, res) => {
     try {
         let station = req.body.station
         let plan_id = req.body.plan_id
-        let serial_num = req.body.serial_num
-        let process = req.body.process
         let material = req.body.material
         let cantidad = req.body.cantidad
-        let capacidad = req.body.capcacidad
         let numero_etiquetas = req.body.numero_etiquetas
         let line = req.body.line
         let impresoType = req.body.impresoType
@@ -50,8 +47,8 @@ controller.handlingEXT_POST = async (req, res) => {
             let printedLabel = await funcion.printLabel_EXT(data, "EXT")
 
             if (printedLabel.status === 200) {
-                let result_update_plan_ext = await funcion.update_plan_ext(plan_id)
-                let result_update_print_ext = await funcion.update_print_ext(parseInt(resultHU.HUKEY), plan_id, material, operator_id, cantidad, impresoType)
+                await funcion.update_plan_ext(plan_id)
+                await funcion.update_print_ext(parseInt(resultHU.HUKEY), plan_id, material, operator_id, cantidad, impresoType)
             } else {
                 return res.json({ "key": `Testr` })
             }
@@ -123,7 +120,6 @@ controller.transferEXTPR_POST = async (req, res) => {
         // console.log("transferEXTPR_POST", req.body)
         let material = req.body.material
         let cantidad = req.body.cantidad
-        let cantidad_actual = 0
         let estacion = req.body.station
         let operador_name = req.body.operador_name
 
@@ -138,7 +134,7 @@ controller.transferEXTPR_POST = async (req, res) => {
             storage_type = "100"
             storage_bin = "101"
         }
-        const materialData = await funcion.sapRFC_consultaMaterial_EXT(material, storage_location, storage_type, storage_bin);
+        const materialData = await funcion.sapRFC_consultaMaterial_EXT(material, storage_type, storage_bin);
 
         if (materialData.length === 0) {
             res.json({ key: "No Material available at selected location" });
@@ -158,7 +154,7 @@ controller.transferEXTPR_POST = async (req, res) => {
             } else {
                 const materialResult = await funcion.materialEXT(material);
                 if (materialResult.length === 0) { return res.json({ key: "Material not found in Database" }) }
-                const transferResult1 = await funcion.sapRFC_transferEXTPR_1(material, cantidad, storage_location, storage_type, storage_bin);
+                await funcion.sapRFC_transferEXTPR_1(material, cantidad, storage_location, storage_type, storage_bin);
                 const transferResult2 = await funcion.sapRFC_transferEXTPR_2(material, cantidad, storage_location);
                 const labelData = await funcion.getPrinter(estacion);
 
@@ -233,8 +229,6 @@ controller.getUbicacionesEXTMandrel_POST = async (req, res) => {
     try {
         const estacion = req.body.station;
         const mandrel = req.body.mandrel;
-        const proceso = req.body.proceso;
-        const user_id = req.body;
 
         const storageLocation = await funcion.getStorageLocation(estacion);
         const storage_location = storageLocation[0].storage_location;
@@ -258,8 +252,6 @@ controller.getUbicacionesEXTSerial_POST = async (req, res) => {
     // console.log("getUbicacionesEXTSerial_POST", req.body)
     const estacion = req.body.station;
     const serial = req.body.serial;
-    const proceso = req.body.proceso;
-    const user_id = req.body;
     try {
         const storageLocation = await funcion.getStorageLocation(estacion);
         const serialResult = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial, 20));
@@ -284,15 +276,10 @@ controller.postSerialsEXT_POST = async (req, res) => {
     // console.log("postSerialsEXT_POST", req.body)
     let estacion = req.body.station
     let serial = req.body.serial
-    let material = null
-    let cantidad = null
-    let proceso = req.body.proceso
     let storage_bin = req.body.storage_bin.toUpperCase()
-    let user_id = req.body
     let max_storage_unit_bin = 5
 
     let serials_array = serial.split(",")
-    let promises = [];
     let errorsArray = [];
     let resultsArray = [];
 
@@ -373,6 +360,7 @@ controller.postCycleSUEXT_POST = async (req, res) => {
         let listed_storage_units_promises = []
         let unlisted_storage_units_promises = []
         let not_found_storage_units_promises = []
+        let response_list = []
         let estacion = req.body.estacion
 
         switch (storage_type) {
@@ -421,20 +409,20 @@ controller.postCycleSUEXT_POST = async (req, res) => {
             funcion.dBinsert_cycle_result(storage_type, storage_bin, "", user_id, "OK-BIN", "")
         }
 
-        for (let i = 0; i < listed_storage_units_promises.length; i++) {
-            try {
-                const element = await listed_storage_units_promises[i];
-                if (element.key) {
-                    response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
-                    funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "NOSCAN-ERROR", element.key)
-                } else {
-                    response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
-                    funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "NOSCAN", element.E_TANUM)
-                }
-            } catch (err) {
-                // Handle error
-            }
-        }
+        // for (let i = 0; i < listed_storage_units_promises.length; i++) {
+        //     try {
+        //         const element = await listed_storage_units_promises[i];
+        //         if (element.key) {
+        //             response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
+        //             funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "NOSCAN-ERROR", element.key)
+        //         } else {
+        //             response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
+        //             funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "NOSCAN", element.E_TANUM)
+        //         }
+        //     } catch (err) {
+        //         // Handle error
+        //     }
+        // }
 
         for (let i = 0; i < not_found_storage_units_promises.length; i++) {
             try {
@@ -478,7 +466,6 @@ controller.backflushEXT_POST = async (req, res) => {
     // console.log("backflushEXT_POST", req.body)
     try {
 
-        let station = req.body.station
         let serials = req.body.serials
         let serials_array = serials.split(",")
         let emp_num = req.body.user_id
