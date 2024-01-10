@@ -4,7 +4,6 @@ const controller = {};
 
 controller.transfer_rework_out_POST = async (req, res) => {
     try {
-        let test = req.O_body;
         const material = req.body.material;
         const qty = req.body.qty;
         const estacion = req.body.station

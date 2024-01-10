@@ -3,7 +3,6 @@ const funcion = {};
 //Require Node-RFC
 const createSapRfcPool = require('../connections/sap/connection_SAP');
 const dbB10 = require('../connections/db/connection_b10');
-const dbBartender = require('../connections/db/connection_bartender');
 
 funcion.addLeadingZeros = (num, totalLength) => {
     return String(num).padStart(totalLength, '0');
@@ -24,11 +23,9 @@ funcion.getStorageLocation = async (station) => {
 
 
 funcion.sapRFC_consultaMaterial_RW = async (material_number, storage_location, storage_type, storage_bin) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();    
         const result = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'LQUA',
             DELIMITER: ",",
@@ -45,19 +42,18 @@ funcion.sapRFC_consultaMaterial_RW = async (material_number, storage_location, s
 
         return res;
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 };
 
 
 funcion.sapRFC_transferMaterial_RW = async (material, cantidad, fromStorageLocation, fromStorageType, fromStorageBin, toStorageType, toStorageBin) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();   
         const result = await managed_client.call('L_TO_CREATE_SINGLE', {
             I_LGNUM: `521`,
             I_BWLVS: `998`,
@@ -77,9 +73,10 @@ funcion.sapRFC_transferMaterial_RW = async (material, cantidad, fromStorageLocat
 
         return result;
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
     }
 };
 
