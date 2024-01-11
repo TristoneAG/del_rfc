@@ -5,6 +5,7 @@ const axios = require('axios');
 const createSapRfcPool = require('../connections/sap/connection_SAP');
 const dbB10 = require('../connections/db/connection_b10');
 const dbBartender = require('../connections/db/connection_bartender');
+const dbC = require('../connections/db/connection_cycle');
 
 funcion.addLeadingZeros = (num, totalLength) => {
     return String(num).padStart(totalLength, '0');
@@ -106,6 +107,79 @@ funcion.materialSEM = (material) => {
     })
 }
 
+funcion.sapFromMandrel = async (mandrel, table) => {
+    try {
+        const result = await dbBartender(`
+            SELECT
+                no_sap
+            FROM
+                ${table}
+            WHERE
+                cust_part = "${mandrel}"
+        `);
+        return result;
+    } catch (error) {
+        throw error;
+    }
+}
+
+funcion.dBinsert_cycle_Listed_storage_units = (storage_type, storage_bin, storage_units, emp_num) => {
+    return new Promise((resolve, reject) => {
+        let valores_finales = []
+        let arreglo_arreglos = []
+
+        for (let i = 0; i < storage_units.length; i++) {
+            valores_finales = []
+
+            valores_finales.push(`${storage_type}`)
+            valores_finales.push(`${storage_bin}`)
+            valores_finales.push(`${storage_units[i]}`)
+            valores_finales.push(`${emp_num}`)
+            valores_finales.push(`OK`)
+            arreglo_arreglos.push(valores_finales)
+        }
+
+        let sql = `INSERT INTO cycle_count (storage_type, storage_bin, storage_unit, emp_num, status) VALUES ?`;
+
+        dbC(sql, [arreglo_arreglos])
+            .then((result) => {
+                resolve(result.affectedRows)
+            })
+            .catch((error) => { reject(error) })
+
+    })
+
+}
+
+funcion.dBinsert_cycle_result = (storage_type, storage_bin, storage_unit, emp_num, status, sap_result) => {
+    return new Promise((resolve, reject) => {
+
+
+
+        dbC(`INSERT INTO cycle_count (storage_type, storage_bin, storage_unit, emp_num, status, sap_result) 
+                VALUES ("${storage_type}", "${storage_bin}", "${storage_unit}", "${emp_num}", "${status}", "${sap_result}")`)
+            .then((result) => { resolve(result) })
+            .catch((error) => { reject(error) })
+
+    })
+
+}
+
+funcion.dBinsertListed_OKBIN = (storage_type, storage_bin, storage_units, emp_num) => {
+    return new Promise((resolve, reject) => {
+
+
+        let sql = `INSERT INTO cycle_count (storage_type, storage_bin, storage_unit, emp_num, status) VALUES ?`;
+
+        dbC(sql, [[storage_type, storage_bin, "", emp_num, ""]])
+            .then((result) => {
+                resolve(result.affectedRows)
+            })
+            .catch((error) => { reject(error) })
+
+    })
+
+}
 
 
 funcion.printLabel_SEM = async (station, P_material, _material, cantidad, subline, serial_num) => {
@@ -130,9 +204,9 @@ funcion.printLabel_SEM = async (station, P_material, _material, cantidad, sublin
             real_quant: `${parseInt(cantidad)}`,
             serial_num: `${parseInt(serial_num)}`,
             client: materialResult[0].client,
-            platform: "VULC"
+            platform: "SEM"
         };
-        // let printedLabel = await funcion.printLabel_VUL(data, "VULC")
+        // let printedLabel = await funcion.printLabel_SEM(data, "SEM")
         // if (printedLabel.status !== 200) { return res.json({ "key": `Label print error check Bartender Server` }) }
 
         const printedLabel = await axios({
@@ -149,12 +223,106 @@ funcion.printLabel_SEM = async (station, P_material, _material, cantidad, sublin
     }
 };
 
-funcion.backflushFG = async (serial) => {
-    let sapRFCPool
+funcion.sapRFC_consultaMaterial = async (material_number, storage_location) => {
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();
+        const result = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'LQUA',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `MATNR EQ '${material_number}'   AND LGORT EQ '${storage_location}'` }]
+        });
+
+        let columns = [];
+        let rows = [];
+        let fields = result.FIELDS;
+
+        fields.forEach(field => {
+            columns.push(field.FIELDNAME);
+        });
+
+        let data = result.DATA;
+
+        data.forEach(data_ => {
+            rows.push(data_.WA.split(","));
+        });
+
+        let res = rows.map(row => Object.fromEntries(
+            columns.map((key, i) => [key, row[i]])
+        ));
+
+        return res;
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+}
+
+funcion.sapRFC_transferSEM = async (serial, storage_bin) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+        const result = await managed_client.call('L_TO_CREATE_MOVE_SU', {
+            I_LENUM: `${funcion.addLeadingZeros(serial, 20)}`,
+            I_BWLVS: `998`,
+            I_LETYP: `IP`,
+            I_NLTYP: `SEM`,
+            I_NLBER: `001`,
+            I_NLPLA: `${storage_bin.toUpperCase()}`
+        });
+
+        return result;
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+};
+
+funcion.sapRFC_consultaStorageBin = async (storage_location, storage_type, storage_bin) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+        const result = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'LQUA',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `LGORT EQ '${storage_location}' AND LGTYP EQ '${storage_type}' AND LGPLA EQ '${storage_bin.toUpperCase()}'` }]
+        });
+
+        let columns = [];
+        let rows = [];
+        let fields = result.FIELDS;
+
+        fields.forEach(field => {
+            columns.push(field.FIELDNAME);
+        });
+
+        let data = result.DATA;
+
+        data.forEach(data_ => {
+            rows.push(data_.WA.split(","));
+        });
+
+        let res = rows.map(row => Object.fromEntries(
+            columns.map((key, i) => [key, row[i]])
+        ));
+
+        return res;
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+}
+
+funcion.backflushFG = async (serial) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
 
         const result = await managed_client.call('ZWM_HU_MFHU', {
             I_EXIDV: `${funcion.addLeadingZeros(serial, 20)}`,
@@ -162,18 +330,17 @@ funcion.backflushFG = async (serial) => {
         });
         return result;
     } catch {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 }
 
 funcion.sapRFC_TBNUM = async (material, cantidad) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();
         const result = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'LTBP',
             DELIMITER: ",",
@@ -188,34 +355,33 @@ funcion.sapRFC_TBNUM = async (material, cantidad) => {
         res.sort((a, b) => (parseInt(b.TBNUM) - parseInt(a.TBNUM)));
         return res;
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         return err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
 
 funcion.sapRFC_transferSEM_TR = async (serial_num, quantity, storage_type, storage_bin, tbnum) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();
         try {
             const result = await managed_client.call('L_TO_CREATE_TR', {
                 I_LGNUM: '521',
                 I_TBNUM: `${tbnum}`,
                 IT_TRITE:
-                        [{
-                            TBPOS:"001",
-                            ANFME:`${quantity}`,
-                            ALTME:"ST",
-                            NLTYP:`${storage_type}`,
-                            NLBER:"001",
-                            NLPLA:`${storage_bin}`,
-                            NLENR:`${funcion.addLeadingZeros(serial_num, 20)}`,
-                            LETYP:"001"
-                        }]            
+                    [{
+                        TBPOS: "001",
+                        ANFME: `${quantity}`,
+                        ALTME: "ST",
+                        NLTYP: `${storage_type}`,
+                        NLBER: "001",
+                        NLPLA: `${storage_bin}`,
+                        NLENR: `${funcion.addLeadingZeros(serial_num, 20)}`,
+                        LETYP: "001"
+                    }]
             });
 
             return result;
@@ -223,19 +389,18 @@ funcion.sapRFC_transferSEM_TR = async (serial_num, quantity, storage_type, stora
             throw err;
         }
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
 
 funcion.sapRFC_consultaStorageUnit = async (storage_unit) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();
 
         const result = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'LQUA',
@@ -249,18 +414,17 @@ funcion.sapRFC_consultaStorageUnit = async (storage_unit) => {
 
         return res;
     } catch (error) {
+        await createSapRfcPool.destroy(managed_client);
         throw error;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
 funcion.sapRFC_transferSemProd = async (serial, storage_type, storage_bin) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();
 
         const parameters = {
             I_LENUM: `${funcion.addLeadingZeros(serial, 20)}`,
@@ -274,18 +438,17 @@ funcion.sapRFC_transferSemProd = async (serial, storage_type, storage_bin) => {
         const result = await managed_client.call('L_TO_CREATE_MOVE_SU', parameters);
         return result;
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 }
 
 funcion.sapRFC_consultaMaterial_SEM = async (material_number, storage_location, storage_type) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();
         const result = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'LQUA',
             DELIMITER: ",",
@@ -298,19 +461,18 @@ funcion.sapRFC_consultaMaterial_SEM = async (material_number, storage_location, 
 
         return res;
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
 
 funcion.sapRFC_transferProdSem_1 = async (material, qty, storage_location, storage_type, storage_bin) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();
         try {
             const result = await managed_client.call('L_TO_CREATE_SINGLE', {
                 I_LGNUM: '521',
@@ -330,51 +492,45 @@ funcion.sapRFC_transferProdSem_1 = async (material, qty, storage_location, stora
             throw err;
         }
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
 
 funcion.sapRFC_transferProdSem_2 = async (material, qty, storage_location, storage_type, storage_bin) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
-        try {
-            const result = await managed_client.call('L_TO_CREATE_SINGLE', {
-                I_LGNUM: '521',
-                I_BWLVS: '199',
-                I_MATNR: material,
-                I_WERKS: '5210',
-                I_ANFME: qty,
-                I_LGORT: storage_location,
-                I_LETYP: 'IP',
-                I_NLTYP: storage_type,
-                I_NLBER: '001',
-                I_NLPLA: storage_bin
-            });
+        managed_client = await createSapRfcPool.acquire();
 
-            return result;
-        } catch (err) {
-            throw err;
-        }
+        const result = await managed_client.call('L_TO_CREATE_SINGLE', {
+            I_LGNUM: '521',
+            I_BWLVS: '199',
+            I_MATNR: material,
+            I_WERKS: '5210',
+            I_ANFME: qty,
+            I_LGORT: storage_location,
+            I_LETYP: 'IP',
+            I_NLTYP: storage_type,
+            I_NLBER: '001',
+            I_NLPLA: storage_bin
+        });
+        return result;
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
 
-funcion.sapRFC_consultaMaterial_VUL = async (material_number, storage_location, storage_type, storage_bin) => {
-    let sapRFCPool
+funcion.sapRFC_consultaMaterial_SEM = async (material_number, storage_type, storage_bin) => {
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
+        managed_client = await createSapRfcPool.acquire();  
         const result = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'LQUA',
             DELIMITER: ",",
@@ -400,19 +556,18 @@ funcion.sapRFC_consultaMaterial_VUL = async (material_number, storage_location, 
 
         return res;
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
-    } 
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
 }
 
 funcion.sapRFC_HUSEM = async (storage_location, material, cantidad) => {
-    let sapRFCPool
     let managed_client
     try {
-        sapRFCPool = await createSapRfcPool();
-        managed_client = await sapRFCPool.acquire();
-        
+        managed_client = await createSapRfcPool.acquire();
+
         const result_packing_object = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'PACKKP',
             DELIMITER: ",",
@@ -445,9 +600,9 @@ funcion.sapRFC_HUSEM = async (storage_location, material, cantidad) => {
             }],
         });
 
-        const result_commit = await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
+        await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
 
-        const result_hu_change_header = await managed_client.call('BAPI_HU_CHANGE_HEADER', {
+        await managed_client.call('BAPI_HU_CHANGE_HEADER', {
             HUKEY: result_hu_create.HUKEY,
             HUCHANGED: {
                 CLIENT: '200',
@@ -457,14 +612,142 @@ funcion.sapRFC_HUSEM = async (storage_location, material, cantidad) => {
             },
         });
 
-        const result_commit2 = await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
+        await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
 
         return result_hu_create
     } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        if (managed_client) { managed_client.release() };
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 }
+
+funcion.sapRFC_transferSlocCheck = async (serial, storage_location, storage_type, storage_bin) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+        const result_suCheck = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'LQUA',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `LENUM EQ '${funcion.addLeadingZeros(serial, 20)}'` }]
+        });
+        const columns = result_suCheck.FIELDS.map(field => field.FIELDNAME);
+        const rows = result_suCheck.DATA.map(data_ => data_.WA.split(","));
+
+        const res = rows.map(row => Object.fromEntries(
+            columns.map((key, i) => [key, row[i]])
+        ));
+
+        if (res.length === 0) {
+            return ({ "key": "SU_DOESNT_EXIST", "abapMsgV1": `${serial}` });
+
+        } else if (res[0].LGORT !== storage_location) {
+            return ({ "key": "Storage Locations do not match", "abapMsgV1": `${serial}` });
+        } else {
+            const inputParameters = {
+                I_LENUM: funcion.addLeadingZeros(serial, 20),
+                I_BWLVS: '998',
+                I_NLTYP: storage_type,
+                I_NLBER: '001',
+                I_NLPLA: storage_bin.toUpperCase()
+            };
+            const result = await managed_client.call('L_TO_CREATE_MOVE_SU', inputParameters);
+            return result;
+        }
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
+    }
+};
+
+funcion.sapRFC_transferSEMProd = async (serial, storage_location, storage_type, storage_bin) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+
+        const result_suCheck = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'LQUA',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `LENUM EQ '${funcion.addLeadingZeros(serial, 20)}'` }]
+        });
+        const columns = result_suCheck.FIELDS.map(field => field.FIELDNAME);
+        const rows = result_suCheck.DATA.map(data_ => data_.WA.split(","));
+
+        const res = rows.map(row => Object.fromEntries(
+            columns.map((key, i) => [key, row[i]])
+        ));
+
+        if (res.length === 0) {
+            return ({ "key": "SU_DOESNT_EXIST", "abapMsgV1": `${serial}` });
+
+        } else if (res[0].LGTYP !== "SEM" || res[0].LGORT !== storage_location) {
+            return ({ "key": `Check SU SType: ${res[0].LGTYP}, SLocation: ${res[0].LGORT}`, "abapMsgV1": `${serial}` });
+        } else {
+            const result = await managed_client.call('L_TO_CREATE_MOVE_SU', {
+                I_LENUM: `${funcion.addLeadingZeros(serial, 20)}`,
+                I_BWLVS: '998',
+                I_LETYP: 'IP',
+                I_NLTYP: storage_type.toUpperCase(),
+                I_NLBER: '001',
+                I_NLPLA: storage_bin.toUpperCase()
+            });
+            return result;
+        }
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+}
+
+funcion.sapRFC_consultaMaterial_ST = async (material_number, storage_location, storage_type) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+        const options = {
+            QUERY_TABLE: 'LQUA',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `MATNR EQ '${material_number.toUpperCase()}' AND LGORT EQ '${storage_location}' AND LGTYP EQ '${storage_type}' ` }]
+        };
+
+        const result = await managed_client.call('RFC_READ_TABLE', options);
+        const columns = result.FIELDS.map(field => field.FIELDNAME);
+        const rows = result.DATA.map(data_ => data_.WA.split(","));
+        const res = rows.map(row => Object.fromEntries(columns.map((key, i) => [key, row[i]])));
+        return res;
+    } catch (error) {
+        await createSapRfcPool.destroy(managed_client);
+        throw error;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+}
+
+funcion.sapRFC_SbinOnStypeExists = async (storage_type, storage_bin) => {   
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+
+        const result = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'LAGP',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `LGNUM EQ 521 AND LGTYP EQ '${storage_type}' AND LGPLA EQ '${storage_bin}'` }]
+            // FIELDS: ["MATNR", "LGORT", "LGTYP", "LGPLA"]
+        });
+        const fields = result.FIELDS.map(field => field.FIELDNAME);
+        const rows = result.DATA.map(data_ => data_.WA.split(","));
+        const res = rows.map(row => Object.fromEntries(fields.map((key, i) => [key, row[i]])));
+        return res;
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+};
 
 module.exports = funcion;

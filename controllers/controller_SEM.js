@@ -108,7 +108,7 @@ controller.consultaSemProductionStock_POST = async (req, res) => {
             return res.json({ key: `Invalid storage location "${storage_location}"` });
         }
 
-        const result = await funcion.sapRFC_consultaMaterial_VUL("'" + material + "'", storage_location, storage_type, storage_bin);
+        const result = await funcion.sapRFC_consultaMaterial_SEM("'" + material + "'",  storage_type, storage_bin);
 
         if (result.length === 0) { return res.json({ "qty": 0 }); }
 
@@ -121,8 +121,6 @@ controller.consultaSemProductionStock_POST = async (req, res) => {
 };
 
 controller.handlingSEM_POST = async (req, res) => {
-
-    console.log(req.body);
     try {
         let station = req.body.station
         let material = req.body.material
@@ -158,7 +156,6 @@ controller.handlingSEM_POST = async (req, res) => {
 }
 
 controller.postSEM_POST = async (req, res) => {
-    console.log(req.body);
     try {
 
         let station = req.body.station
@@ -258,6 +255,261 @@ controller.reprintLabelSEM_POST = async (req, res) => {
 
     } catch (err) {
         return res.json(err)
+    }
+}
+
+
+
+controller.auditoriaSEM_POST = async (req, res) => {
+    try {
+        let serial = req.body.serial;
+        let serials_array = serial.split(",");
+        let estacion = req.body.station;
+        let storage_type;
+        let storage_bin;
+        
+        const resultSL = await funcion.getStorageLocation(estacion);
+        if (resultSL.length === 0) {return res.json({ key: `Storage Location not set for device "${estacion}"` });}
+        let storage_location = resultSL[0].storage_location;
+
+        if (storage_location == "0012") {
+            storage_type = "102";
+            storage_bin = "103";
+        }
+        if (storage_location == "0002") {
+            storage_type = "100";
+            storage_bin = "101";
+        }
+        let results = [];
+        for (let i = 0; i < serials_array.length; i++) {
+            const result = await funcion.sapRFC_transferSEMProd(serials_array[i], storage_location, storage_type, storage_bin);
+            results.push(result);
+        }
+        res.json(results);
+    } catch (err) {
+        res.json(err);
+    }
+};
+
+controller.getUbicacionesSEMMaterial_POST = async (req, res) => {
+    try {
+        let estacion = req.body.estacion
+        let material = req.body.material;
+
+        const storageLocation = await funcion.getStorageLocation(estacion);
+        const storage_location = storageLocation[0].storage_location;
+
+        const resultado = await funcion.sapRFC_consultaMaterial_ST(material, storage_location, "SEM");
+        res.json(resultado);
+    } catch (err) {
+        res.json(err);
+    }
+};
+
+controller.getUbicacionesSEMMandrel_POST = async (req, res) => {
+    try {
+        let estacion = req.body.estacion;
+        let mandrel = req.body.mandrel;
+
+        const storageLocation = await funcion.getStorageLocation(estacion);
+        const storage_location = storageLocation[0].storage_location;
+
+        const result = await funcion.sapFromMandrel(mandrel, "sem");
+
+        if (result.length === 0) {
+            res.json({ "key": "Check Mandrel Number" });
+        } else {
+            const noSap = result[0].no_sap.substring(1);
+            const materialResult = await funcion.sapRFC_consultaMaterial_ST(noSap, storage_location, "SEM");
+            res.json(materialResult);
+        }
+    } catch (err) {
+        res.json(err);
+    }
+};
+
+controller.getUbicacionesSEMSerial_POST = async (req, res) => {
+    let estacion = req.body.estacion;
+    let serial = req.body.serial;
+    try {
+
+        const storageLocation = await funcion.getStorageLocation(estacion);
+        const serialResult = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial, 20));
+        const storage_location = storageLocation[0].storage_location;
+        if (serialResult.length === 0) {
+            return res.json({ key: "Check Serial Number" });
+        } else if (serialResult[0].LGORT !== storage_location) {
+            return res.json({ "key": "Storage Locations do not match", "abapMsgV1": `${serial}` });
+        } else {
+            const materialResult = await funcion.sapRFC_consultaMaterial(serialResult[0].MATNR, storage_location);
+            return res.json(materialResult);
+        }
+    } catch (err) {
+        return res.json(err);
+    }
+};
+
+controller.transferSEM_Confirmed_POST = async (req, res) => {
+    let estacion = req.body.station
+    let serial = req.body.serial
+    let storage_bin = req.body.storage_bin.toUpperCase()
+    let max_storage_unit_bin = 5
+
+    let serials_array = serial.split(",")
+    let errorsArray = [];
+    let resultsArray = [];
+
+    try {
+        const result_getStorageLocation = await funcion.getStorageLocation(estacion);
+        const binExists = await funcion.sapRFC_SbinOnStypeExists( "SEM", storage_bin)
+        const result_consultaStorageBin = await funcion.sapRFC_consultaStorageBin(result_getStorageLocation[0].storage_location, "SEM", storage_bin);
+        let serials_bin = serials_array.length + result_consultaStorageBin.length
+        if (binExists.length === 0) {
+            res.json([{ "key": `Storage Bin ${storage_bin} not found in Storage Type SEM`, "abapMsgV1": "ALL" }]);
+        } else if (storage_bin[0] == "r" || storage_bin[0] == "R" && serials_bin > max_storage_unit_bin) {
+            res.json([{ "key": `Exceeded amount of Storage Units per Bin: ${serials_bin - max_storage_unit_bin}` }]);
+        } else {
+            for (const serial_ of serials_array) {
+                const result_consultaStorageUnit = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial_, 20));
+                if (result_consultaStorageUnit.length === 0) {
+                    errorsArray.push({ "key": `Check SU ${serial_}`, "abapMsgV1": `${serial_}` });
+                } else if (result_consultaStorageUnit[0].LGORT !== result_getStorageLocation[0].storage_location) {
+                    errorsArray.push({ "key": `SU ${serial_} is in a different storage location`, "abapMsgV1": `${serial_}` });
+                } else {
+                    const result = await funcion.sapRFC_transferSEM(serial_, storage_bin);
+                    resultsArray.push(result);
+                }
+            }
+            const newArray = resultsArray.concat(errorsArray);
+            res.json(newArray);
+        }
+    } catch (err) {
+        res.json(err)
+    }
+}
+
+controller.getBinStatusReportSEM_POST = async (req, res) => {
+    let estacion = req.body.estacion;
+    let storage_bin = req.body.storage_bin;
+    let storage_type = req.body.storage_type;
+
+    try {
+        const storageBinExists = await funcion.sapRFC_SbinOnStypeExists(storage_type, storage_bin);
+        if (storageBinExists.length === 0) {
+            res.json({ "key": `Storage Bin "${storage_bin}" does not exist at Storage Type "${storage_type}"` });
+        } else {
+            const resultSL = await funcion.getStorageLocation(estacion);
+
+            if (resultSL.length === 0) {
+                return res.json({ "key": `Storage Location not set for device "${estacion}"` });
+            }
+            const storageLocation = resultSL[0].storage_location;
+            const result = await funcion.sapRFC_consultaStorageBin(storageLocation, storage_type, storage_bin);
+            const info_list = result.map(element => { return { "storage_unit": parseInt(element.LENUM) }; });
+            res.json({ "info_list": info_list, "error": "N/A" });
+
+
+        }
+    } catch (err) {
+        res.json({ "error": "An error occurred" });
+    }
+};
+
+controller.postCycleSUSEM_POST = async (req, res) => {
+    try {
+        let storage_bin = req.body.storage_bin
+        let user_id = req.body.user_id
+        let storage_type = req.body.storage_type
+        let listed_storage_units = req.body.listed_storage_units == '' ? [] : req.body.listed_storage_units.split(",")
+        let unlisted_storage_units = req.body.unlisted_storage_units == '' ? [] : req.body.unlisted_storage_units.split(",")
+        let not_found_storage_units = req.body.not_found_storage_units == '' ? [] : req.body.not_found_storage_units.split(",")
+        let st = ""
+        let sb = ""
+        let listed_storage_units_promises = []
+        let unlisted_storage_units_promises = []
+        let not_found_storage_units_promises = []
+        let response_list = []
+        let estacion = req.body.estacion
+
+        switch (storage_type) {
+            case "SEM":
+                st = storage_type
+                sb = "CICLICOSEM"
+                break;
+            default:
+                res.json(JSON.stringify({ "key": `Storage Type: "${storage_type}" not configured for Cycle Control` }))
+                break;
+        }
+
+        const resultSL = await funcion.getStorageLocation(estacion);
+
+        if (resultSL.length === 0) {
+            return res.json({ key: `Storage Location not set for device "${estacion}"` });
+        }
+
+        let storage_location = resultSL[0].storage_location
+
+
+        if (listed_storage_units.length > 0) {
+            listed_storage_units.forEach(element => {
+                listed_storage_units_promises.push(funcion.dBinsert_cycle_Listed_storage_units(storage_type, storage_bin.toUpperCase(), [element], user_id)
+                    .catch((err) => { return err }))
+            })
+        }
+
+        if (not_found_storage_units.length > 0) {
+            not_found_storage_units.forEach(element => {
+                not_found_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, st, sb)
+                    .catch((err) => { return err }))
+            })
+
+        }
+
+        if (unlisted_storage_units.length > 0) {
+            unlisted_storage_units.forEach(element => {
+                unlisted_storage_units_promises.push(funcion.sapRFC_transferSlocCheck(element, storage_location, storage_type, storage_bin)
+                    .catch((err) => { return err }))
+            })
+        }
+
+
+        if (listed_storage_units.length == 0 && unlisted_storage_units.length == 0 && not_found_storage_units.length == 0) {
+            funcion.dBinsert_cycle_result(storage_type, storage_bin, "", user_id, "OK-BIN", "")
+        }
+
+        for (let i = 0; i < not_found_storage_units_promises.length; i++) {
+            try {
+                const element = await not_found_storage_units_promises[i];
+                if (element.key) {
+                    response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
+                    funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "NOSCAN-ERROR", element.key)
+                } else {
+                    response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
+                    funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "NOSCAN", element.E_TANUM)
+                }
+            } catch (err) {
+                // Handle error
+            }
+        }
+
+        for (let i = 0; i < unlisted_storage_units_promises.length; i++) {
+            try {
+                const element = await unlisted_storage_units_promises[i];
+                if (element.key) {
+                    response_list.push({ "serial_num": parseInt(element.abapMsgV1), "result": "N/A", "error": element.key })
+                    funcion.dBinsert_cycle_result(storage_type, storage_bin, element.abapMsgV1, user_id, "WRONGBIN-ERROR", element.key)
+                } else {
+                    response_list.push({ "serial_num": parseInt(element.I_LENUM), "result": element.E_TANUM, "error": "N/A" })
+                    funcion.dBinsert_cycle_result(storage_type, storage_bin, parseInt(element.I_LENUM), user_id, "WRONGBIN", element.E_TANUM)
+                }
+            } catch (err) {
+                // Handle error
+            }
+        }
+
+        res.json(response_list);
+    } catch (err) {
+        res.json(err)
     }
 }
 
