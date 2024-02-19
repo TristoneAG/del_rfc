@@ -613,7 +613,7 @@ funcion.backflushEXT = async (serial, product_version) => {
 
         const result = await managed_client.call('ZWM_HU_MFHU', {
             I_EXIDV: `${funcion.addLeadingZeros(serial, 20)}`,
-            I_VERIDI_VERID: `${product_version}`
+            I_VERID: `${product_version}`
         });
         return result;
     } catch (err) {
