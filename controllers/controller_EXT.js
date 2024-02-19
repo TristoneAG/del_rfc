@@ -463,9 +463,9 @@ controller.postCycleSUEXT_POST = async (req, res) => {
 
 
 controller.backflushEXT_POST = async (req, res) => {
-    // console.log("backflushEXT_POST", req.body)
+    console.log("backflushEXT_POST", req.body)
     try {
-
+        let station = req.body.station
         let serials = req.body.serials
         let serials_array = serials.split(",")
         let emp_num = req.body.user_id
