@@ -129,14 +129,14 @@ funcion.dBinsertListed_OKBIN = (storage_type, storage_bin, storage_units, emp_nu
 }
 
 
-funcion.sapRFC_BackflushVUL = async (serial) => {
+funcion.sapRFC_BackflushVUL = async (serial, product_version) => {
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
 
         const result = await managed_client.call('ZWM_HU_MFHU', {
             I_EXIDV: `${funcion.addLeadingZeros(serial, 20)}`,
-            I_VERID: '1'
+            I_VERID: `${product_version}`
         });
         return result;
     } catch {

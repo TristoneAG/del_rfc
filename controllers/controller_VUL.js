@@ -57,10 +57,13 @@ controller.postVUL_POST = async (req, res) => {
         }
 
         const resultSL = await funcion.getStorageLocation(station);
+        const resultPV = await funcion.getProductVersion(station);
         if (resultSL.length === 0) { return res.json({ "key": `Storage Location not set for device "${station}"` }) }
+        if (resultPV.length === 0) { return res.json({ "key": `Product Version not set for device "${station}"` }) }
         const storage_location = resultSL[0].storage_location;
+        const product_version = resultPV[0].product_version;
 
-        let resultBackflush = await funcion.sapRFC_BackflushVUL(serial_num);
+        let resultBackflush = await funcion.sapRFC_BackflushVUL(serial_num, product_version);
         if (resultBackflush.E_RETURN.TYPE !== "S") {
             if (!resultBackflush.E_RETURN.MESSAGE.toLowerCase().includes('already posted')) {
                 return res.json({ "key": `${resultBackflush.E_RETURN.MESSAGE}` })

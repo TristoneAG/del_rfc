@@ -26,6 +26,20 @@ funcion.getStorageLocation = async (station) => {
     }
 }
 
+
+funcion.getProductVersion = async (station) => {
+    try {
+        const result = await dbB10(`
+            SELECT product_version
+            FROM b10.station_conf
+            WHERE no_estacion = '${station}'
+        `);
+        return result;
+    } catch (error) {
+        throw error;
+    }
+}
+
 funcion.getPrinter = async (station) => {
     try {
         const result = await dbB10(`
@@ -591,14 +605,14 @@ funcion.sapRFC_transferSlocCheck = async (serial, storage_location, storage_type
 };
 
 
-funcion.backflushEXT = async (serial) => {
+funcion.backflushEXT = async (serial, product_version) => {
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
         
         const result = await managed_client.call('ZWM_HU_MFHU', {
             I_EXIDV: `${funcion.addLeadingZeros(serial, 20)}`,
-            I_VERID: '1'
+            I_VERIDI_VERID: `${product_version}`
         });
         return result;
     } catch(err) {

@@ -176,8 +176,11 @@ controller.postSEM_POST = async (req, res) => {
         }
         
         const resultSL = await funcion.getStorageLocation(station);
+        const resultPV = await funcion.getProductVersion(station);
         if (resultSL.length === 0) { return res.json({ "key": `Storage Location not set for device "${station}"` }) }
+        if (resultPV.length === 0) { return res.json({ "key": `Product Version not set for device "${station}"` }) }
         const storage_location = resultSL[0].storage_location;
+        const product_version = resultPV[0].product_version;
         if (storage_location === "0012") {
             from_storage_type = "102"
             from_storage_bin = "103"
@@ -194,7 +197,7 @@ controller.postSEM_POST = async (req, res) => {
         let current_stock = await funcion.getCurrentStockSem(P_material);
         if (current_stock.length === 0) { return res.json({ "key": `Material not found in current stock` }) }
         
-        let resultBackflush = await funcion.backflushFG(serial_num);
+        let resultBackflush = await funcion.backflushSEM(serial_num, product_version);
         if (resultBackflush.E_RETURN.TYPE !== "S") {
             if (!resultBackflush.E_RETURN.MESSAGE.toLowerCase().includes('already posted')) {
                 return res.json({ "key": `${resultBackflush.E_RETURN.MESSAGE}` })

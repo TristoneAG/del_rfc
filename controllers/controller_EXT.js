@@ -472,6 +472,10 @@ controller.backflushEXT_POST = async (req, res) => {
         let errorsArray = [];
         let resultsArray = [];
 
+        const resultPV = await funcion.getProductVersion(station);
+        if (resultPV.length === 0) { return res.json({ "key": `Product Version not set for device "${station}"` }) }
+        const product_version = resultPV[0].product_version;
+
         for (let i = 0; i < serials_array.length; i++) {
 
 
@@ -479,7 +483,7 @@ controller.backflushEXT_POST = async (req, res) => {
             //     errorsArray.push({ "key": `Check Serial Number not found`, "serial": `${serial_number_10}` })
             // } else {
             let serial_number_10 = funcion.addLeadingZeros(serials_array[i], 10)
-            let resultBackflush = await funcion.backflushEXT(serial_number_10);
+            let resultBackflush = await funcion.backflushEXT(serial_number_10, product_version);
             if (resultBackflush.E_RETURN.TYPE !== "S") {
                 errorsArray.push({ "key": `${resultBackflush.E_RETURN.MESSAGE}`, "serial": `${serial_number_10}`, "time": `${new Date().toLocaleString()}` })
             } else {
