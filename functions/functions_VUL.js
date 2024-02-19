@@ -26,6 +26,19 @@ funcion.getStorageLocation = async (station) => {
     }
 }
 
+funcion.getProductVersion = async (station) => {
+    try {
+        const result = await dbB10(`
+            SELECT product_version
+            FROM b10.station_conf
+            WHERE no_estacion = '${station}'
+        `);
+        return result;
+    } catch (error) {
+        throw error;
+    }
+}
+
 
 funcion.getPrinter = (station) => {
     return new Promise((resolve, reject) => {
@@ -139,7 +152,7 @@ funcion.sapRFC_BackflushVUL = async (serial, product_version) => {
             I_VERID: `${product_version}`
         });
         return result;
-    } catch {
+    } catch (err) {
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
