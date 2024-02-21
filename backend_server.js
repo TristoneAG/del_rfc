@@ -15,11 +15,13 @@ const routes_EXT = require('./routes/routes_EXT')
 const routes_VUL = require('./routes/routes_VUL')
 const routes_SEM = require('./routes/routes_SEM')
 const routes_RW = require('./routes/routes_RW')
+const routes_SH = require('./routes/routes_SH')
 
 app.use(routes_EXT)
 app.use(routes_VUL)
 app.use(routes_SEM)
 app.use(routes_RW)
+app.use(routes_SH)
 
 // Error handling middleware
 app.use((err, req, res, next) => {
