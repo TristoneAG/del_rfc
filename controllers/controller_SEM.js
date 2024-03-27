@@ -6,6 +6,7 @@ controller.transferSemProd_POST = async (req, res) => {
     try {
         const serial = req.body.serial;
         const estacion = req.body.station
+        let cantida_sap
 
         const resultSL = await funcion.getStorageLocation(estacion);
         if (resultSL.length === 0) { return res.json({ key: `Storage Location not set for device "${estacion}"` }); }
@@ -27,7 +28,7 @@ controller.transferSemProd_POST = async (req, res) => {
         } else {
             cantida_sap = result_consulta.reduce((total, element) => total + parseFloat(element.GESME.trim()), 0);
         }
-        result_current_stock_db = await funcion.getCurrentStockSem(`P${result_consultaStorageUnit[0].MATNR}`);
+        let result_current_stock_db = await funcion.getCurrentStockSem(`P${result_consultaStorageUnit[0].MATNR}`);
         if (cantida_sap >= parseInt(result_current_stock_db[0].minimum_stock)) {
             await funcion.update_sem_current_stock(`P${result_consultaStorageUnit[0].MATNR}`, cantida_sap);
             await funcion.update_sem_current_employee(`P${result_consultaStorageUnit[0].MATNR}`);
@@ -108,7 +109,7 @@ controller.consultaSemProductionStock_POST = async (req, res) => {
             return res.json({ key: `Invalid storage location "${storage_location}"` });
         }
 
-        const result = await funcion.sapRFC_consultaMaterial_SEM("'" + material + "'",  storage_type, storage_bin);
+        const result = await funcion.sapRFC_consultaMaterial_SEM2("'" + material + "'", storage_type, storage_bin);
 
         if (result.length === 0) { return res.json({ "qty": 0 }); }
 
@@ -174,7 +175,7 @@ controller.postSEM_POST = async (req, res) => {
             P_material = material
             _material = material.substring(1)
         }
-        
+
         const resultSL = await funcion.getStorageLocation(station);
         const resultPV = await funcion.getProductVersion(station);
         if (resultSL.length === 0) { return res.json({ "key": `Storage Location not set for device "${station}"` }) }
@@ -196,7 +197,7 @@ controller.postSEM_POST = async (req, res) => {
 
         let current_stock = await funcion.getCurrentStockSem(P_material);
         if (current_stock.length === 0) { return res.json({ "key": `Material not found in current stock` }) }
-        
+        let minimum_stock = current_stock[0].minimum_stock;
         let resultBackflush = await funcion.backflushSEM(serial_num, product_version);
         if (resultBackflush.E_RETURN.TYPE !== "S") {
             if (!resultBackflush.E_RETURN.MESSAGE.toLowerCase().includes('already posted')) {
@@ -211,16 +212,17 @@ controller.postSEM_POST = async (req, res) => {
             cantidad_sap = result_consulta.reduce((total, element) => total + parseFloat(element.GESME.trim()), 0);
         }
 
-        if (parseInt(cantidad_sap) >= parseInt(current_stock[0].minimum_stock)) {
-            await funcion.update_sem_current_stock(P_material, parseInt(cantidad_sap));
+        if (parseInt(cantidad_sap) >= parseInt(minimum_stock)) {
+            await funcion.update_sem_current_stock(P_material, parseInt(cantidad_sap) + parseFloat(cantidad));
             await funcion.update_sem_current_employee(P_material);
         } else {
-            await funcion.update_sem_current_stock(P_material, parseInt(cantidad_sap));
+            await funcion.update_sem_current_stock(P_material, parseInt(cantidad_sap + parseFloat(cantidad)));
         }
 
-        
+
         let resultTBNUM = await funcion.sapRFC_TBNUM(_material, cantidad)
-        let resultTransfer = await funcion.sapRFC_transferSEM_TR(serial_num, cantidad, "SEM", "TEMPB_SEM", resultTBNUM[0].TBNUM);
+        let resultTransfer = await funcion.sapRFC_transferSEM_TR(serial_num, cantidad, to_storage_type, to_storage_bin, resultTBNUM[0].TBNUM);
+
 
         res.json(resultTransfer);
     } catch (err) {
@@ -270,9 +272,9 @@ controller.auditoriaSEM_POST = async (req, res) => {
         let estacion = req.body.station;
         let storage_type;
         let storage_bin;
-        
+
         const resultSL = await funcion.getStorageLocation(estacion);
-        if (resultSL.length === 0) {return res.json({ key: `Storage Location not set for device "${estacion}"` });}
+        if (resultSL.length === 0) { return res.json({ key: `Storage Location not set for device "${estacion}"` }); }
         let storage_location = resultSL[0].storage_location;
 
         if (storage_location == "0012") {
@@ -364,7 +366,7 @@ controller.transferSEM_Confirmed_POST = async (req, res) => {
 
     try {
         const result_getStorageLocation = await funcion.getStorageLocation(estacion);
-        const binExists = await funcion.sapRFC_SbinOnStypeExists( "SEM", storage_bin)
+        const binExists = await funcion.sapRFC_SbinOnStypeExists("SEM", storage_bin)
         const result_consultaStorageBin = await funcion.sapRFC_consultaStorageBin(result_getStorageLocation[0].storage_location, "SEM", storage_bin);
         let serials_bin = serials_array.length + result_consultaStorageBin.length
         if (binExists.length === 0) {

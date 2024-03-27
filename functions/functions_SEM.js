@@ -540,7 +540,7 @@ funcion.sapRFC_transferProdSem_2 = async (material, qty, storage_location, stora
 };
 
 
-funcion.sapRFC_consultaMaterial_SEM = async (material_number, storage_type, storage_bin) => {
+funcion.sapRFC_consultaMaterial_SEM2 = async (material_number, storage_type, storage_bin) => {
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
