@@ -7,7 +7,7 @@ controller.handlingEXT_POST = async (req, res) => {
     try {
         let station = req.body.station
         let plan_id = req.body.plan_id
-        let material = req.body.material
+        let material = req.body.material.toUpperCase()
         let cantidad = req.body.cantidad
         let numero_etiquetas = req.body.numero_etiquetas
         let line = req.body.line

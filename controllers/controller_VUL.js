@@ -314,7 +314,7 @@ controller.transferVUL_Confirmed_POST = async (req, res) => {
     let estacion = req.body.station
     let serial = req.body.serial
     let storage_bin = req.body.storage_bin.toUpperCase()
-    let max_storage_unit_bin = 5
+    let max_storage_unit_bin = 10
 
     let serials_array = serial.split(",")
     let errorsArray = [];
