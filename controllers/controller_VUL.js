@@ -16,21 +16,72 @@ controller.handlingVUL_POST = async (req, res) => {
         if (resultSL.length === 0) { return res.json({ "key": `Storage Location not set for device "${station}"` }) }
         const storageLocation = resultSL[0].storage_location;
 
-        if (material.charAt(0) !== 'P') {
-            P_material = 'P' + material;
-            _material = material
-        } else {
-            P_material = material
-            _material = material.substring(1)
+        function processMaterial(material) {
+            let P_material;
+            let _material;
+
+            if (material.charAt(0) !== 'P') {
+                P_material = 'P' + material;
+                _material = material;
+            } else {
+                P_material = material;
+                _material = material.substring(1);
+            }
+
+            return { P_material, _material };
         }
 
-        const resultHU = await funcion.sapRFC_HUVUL(storageLocation, _material, cantidad)
-        if (!resultHU.HUKEY) { return res.json({ "key": `Handling unit not created ` }) }
+        const resultMaterial = await funcion.materialVUL(processMaterial(material).P_material)
+        const resultMaterialSTP = await funcion.materialSTP(processMaterial(material).P_material)
 
-        const result_printVul = await funcion.printLabel_VUL(station, P_material, _material, cantidad, subline, resultHU.HUKEY)
-        if (result_printVul.status !== 200) { return res.json({ "key": `Label print error check Bartender Server` }) }
 
-        res.json(resultHU)
+        if (resultMaterial.length === 0 && resultMaterialSTP.length === 0) {
+            return res.json({ "key": `Material not found at database, contact your supervisor` })
+        } else if (resultMaterial.length !== 0 && resultMaterialSTP.length === 0) {
+            const no_sap = resultMaterial[0].no_sap
+            const no_sap_stp = resultMaterial[0].no_sap_stp
+
+            if (no_sap_stp) {
+                const resultHU = await funcion.sapRFC_HUVUL(storageLocation, processMaterial(no_sap_stp)._material, cantidad)
+                if (!resultHU.HUKEY) { return res.json({ "key": `Handling unit not created ` }) }
+
+                const result_printVul = await funcion.printLabel_STP(station, processMaterial(no_sap_stp).P_material, processMaterial(no_sap_stp)._material, cantidad, subline, resultHU.HUKEY)
+                if (result_printVul.status !== 200) { return res.json({ "key": `Label print error check Bartender Server` }) } else { return res.json(resultHU) }
+
+            } else {
+                const resultHU = await funcion.sapRFC_HUVUL(storageLocation, processMaterial(no_sap)._material, cantidad)
+                if (!resultHU.HUKEY) { return res.json({ "key": `Handling unit not created ` }) }
+
+                const result_printVul = await funcion.printLabel_VUL(station, processMaterial(no_sap).P_material, processMaterial(no_sap)._material, cantidad, subline, resultHU.HUKEY)
+                if (result_printVul.status !== 200) { return res.json({ "key": `Label print error check Bartender Server` }) } else { return res.json(resultHU) }
+            }
+
+        } else if (resultMaterial.length === 0 && resultMaterialSTP.length !== 0) {
+            const no_sap = resultMaterialSTP[0].no_sap
+            const no_sap_stp = resultMaterialSTP[0].no_sap_stp
+
+            if (!no_sap) {
+                return res.json({ "key": `Material 5V not found at database, contact your supervisor` })
+            } else {
+                const resultHU = await funcion.sapRFC_HUVUL(storageLocation, processMaterial(no_sap_stp)._material, cantidad)
+                if (!resultHU.HUKEY) { return res.json({ "key": `Handling unit not created ` }) }
+
+                const result_printVul = await funcion.printLabel_STP(station, processMaterial(no_sap_stp).P_material, processMaterial(no_sap_stp)._material, cantidad, subline, resultHU.HUKEY)
+                if (result_printVul.status !== 200) { return res.json({ "key": `Label print error check Bartender Server` }) } else { return res.json(resultHU) }
+            }
+
+        } else {
+
+            const no_sap_stp = resultMaterialSTP[0].no_sap_stp
+
+            const resultHU = await funcion.sapRFC_HUVUL(storageLocation, processMaterial(no_sap_stp)._material, cantidad)
+            if (!resultHU.HUKEY) { return res.json({ "key": `Handling unit not created ` }) }
+
+            const result_printVul = await funcion.printLabel_STP(station, processMaterial(no_sap_stp).P_material, processMaterial(no_sap_stp)._material, cantidad, subline, resultHU.HUKEY)
+            if (result_printVul.status !== 200) { return res.json({ "key": `Label print error check Bartender Server` }) } else { return res.json(resultHU) }
+
+
+        }
 
     } catch (err) {
         return res.json(err)
@@ -47,15 +98,6 @@ controller.postVUL_POST = async (req, res) => {
         let P_material
         let _material
 
-
-        if (material.charAt(0) !== 'P') {
-            P_material = 'P' + material;
-            _material = material
-        } else {
-            P_material = material
-            _material = material.substring(1)
-        }
-
         const resultSL = await funcion.getStorageLocation(station);
         const resultPV = await funcion.getProductVersion(station);
         if (resultSL.length === 0) { return res.json({ "key": `Storage Location not set for device "${station}"` }) }
@@ -63,16 +105,75 @@ controller.postVUL_POST = async (req, res) => {
         const storage_location = resultSL[0].storage_location;
         const product_version = resultPV[0].product_version;
 
-        let resultBackflush = await funcion.sapRFC_BackflushVUL(serial_num, product_version);
-        if (resultBackflush.E_RETURN.TYPE !== "S") {
-            if (!resultBackflush.E_RETURN.MESSAGE.toLowerCase().includes('already posted')) {
-                return res.json({ "key": `${resultBackflush.E_RETURN.MESSAGE}` })
+        // if (material.charAt(0) !== 'P') {
+        //     P_material = 'P' + material;
+        //     _material = material
+        // } else {
+        //     P_material = material
+        //     _material = material.substring(1)
+        // }
+
+        function processMaterial(material) {
+            let P_material;
+            let _material;
+
+            if (material.charAt(0) !== 'P') {
+                P_material = 'P' + material;
+                _material = material;
+            } else {
+                P_material = material;
+                _material = material.substring(1);
+            }
+
+            return { P_material, _material };
+        }
+
+        const resultMaterial = await funcion.materialVUL(processMaterial(material).P_material)
+        const resultMaterialSTP = await funcion.materialSTP(processMaterial(material).P_material)
+
+        if (resultMaterial.length === 0 && resultMaterialSTP.length === 0) {
+            return res.json({ "key": `Material not found at database, contact your supervisor` })
+        } else if (resultMaterial.length !== 0 && resultMaterialSTP.length === 0) {
+
+            let resultBackflush = await funcion.sapRFC_BackflushVUL(serial_num, product_version);
+            if (resultBackflush.E_RETURN.TYPE !== "S") {
+                if (!resultBackflush.E_RETURN.MESSAGE.toLowerCase().includes('already posted')) {
+                    return res.json({ "key": `${resultBackflush.E_RETURN.MESSAGE}` })
+                }
+            }
+            let resultTBNUM = await funcion.sapRFC_TBNUM(processMaterial(material)._material, cantidad)
+            let resultTransfer = await funcion.sapRFC_transferVul_TR(serial_num, cantidad, "VUL", "TEMPB_VUL", resultTBNUM[0].TBNUM);
+            res.json(resultTransfer);
+
+        } else {
+            const no_sap = resultMaterialSTP[0].no_sap
+            const no_sap_stp = resultMaterialSTP[0].no_sap_stp
+
+            if (!no_sap) {
+                return res.json({ "key": `Material 5V not found at database, contact your supervisor` })
+            } else {
+
+                const resultHU_VUL = await funcion.sapRFC_HUVUL(storage_location, processMaterial(no_sap)._material, cantidad)
+                if (!resultHU_VUL.HUKEY) { return res.json({ "key": `Handling unit for Vulcanized Hose not created ` }) }
+
+                let resultBackflushVUL = await funcion.sapRFC_BackflushVUL(resultHU_VUL.HUKEY, product_version);
+                let resultTBNUM_VUL = await funcion.sapRFC_TBNUM(processMaterial(no_sap)._material, cantidad)
+                let resultTransfer_VUL = await funcion.sapRFC_transferVul_TR_2( cantidad, "102", "103", resultTBNUM_VUL[0].TBNUM);
+
+                const resultBackflushSTP = await funcion.sapRFC_BackflushVUL(serial_num, product_version);
+                if (resultBackflushSTP.E_RETURN.TYPE !== "S") {
+                    if (!resultBackflushSTP.E_RETURN.MESSAGE.toLowerCase().includes('already posted')) {
+                        return res.json({ "key": `${resultBackflushSTP.E_RETURN.MESSAGE}` })
+                        //TODO: regresar el material de la manguera vulcanizada
+                    }
+                }
+                let resultTBNUM_STP = await funcion.sapRFC_TBNUM(processMaterial(material)._material, cantidad)
+                let resultTransfer_STP = await funcion.sapRFC_transferVul_TR(serial_num, cantidad, "VUL", "TEMPB_VUL", resultTBNUM_STP[0].TBNUM);
+                res.json(resultTransfer_STP);
             }
         }
-        let resultTBNUM = await funcion.sapRFC_TBNUM(_material, cantidad)
-        let resultTransfer = await funcion.sapRFC_transferVul_TR(serial_num, cantidad, "VUL", "TEMPB_VUL", resultTBNUM[0].TBNUM);
 
-        res.json(resultTransfer);
+
     } catch (err) {
         res.json(err)
     }
@@ -225,9 +326,9 @@ controller.auditoriaVUL_POST = async (req, res) => {
         let estacion = req.body.station;
         let storage_type;
         let storage_bin;
-        
+
         const resultSL = await funcion.getStorageLocation(estacion);
-        if (resultSL.length === 0) {return res.json({ key: `Storage Location not set for device "${estacion}"` });}
+        if (resultSL.length === 0) { return res.json({ key: `Storage Location not set for device "${estacion}"` }); }
         let storage_location = resultSL[0].storage_location;
 
         if (storage_location == "0012") {

@@ -67,6 +67,21 @@ funcion.materialVUL = (material) => {
     })
 }
 
+funcion.materialSTP = (material) => {
+    return new Promise((resolve, reject) => {
+        dbBartender(`
+        SELECT
+            *
+        FROM
+            vulc
+        WHERE
+            no_sap_stp = '${material}'
+        `)
+            .then((result) => { resolve(result) })
+            .catch((error) => { reject(error) })
+    })
+}
+
 funcion.sapFromMandrel = async (mandrel, table) => {
     try {
         const result = await dbBartender(`
@@ -280,9 +295,9 @@ funcion.printLabel_VUL = async (station, P_material, _material, cantidad, sublin
     const labelType = "VULC"
     try {
         const result_printer = await funcion.getPrinter(station);
-        if (result_printer.length === 0) { return res.json({ "key": `Printer not set for device ${station}` }) }
+        if (result_printer.length === 0) { throw new Error(`Printer not set for device ${station}`) }
         const materialResult = await funcion.materialVUL(P_material);
-        if (materialResult.length === 0) { return res.json({ "key": `Part number not set in database ${_material}` }) }
+        if (materialResult.length === 0) { throw new Error(`Part number not set in database ${_material}`) }
         const data = {
             printer: result_printer[0].impre,
             no_sap: materialResult[0].no_sap,
@@ -295,7 +310,43 @@ funcion.printLabel_VUL = async (station, P_material, _material, cantidad, sublin
             real_quant: `${parseInt(cantidad)}`,
             serial_num: `${parseInt(serial_num)}`,
             client: materialResult[0].client,
-            platform: "VULC"
+            platform: materialResult[0].platform
+        };
+
+        const printedLabel = await axios({
+            method: 'POST',
+            url: `http://${process.env.BARTENDER_SERVER}:${process.env.BARTENDER_PORT}/Integration/${labelType}/Execute/`,
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            data: JSON.stringify(data)
+        });
+        return printedLabel;
+    } catch (err) {
+        throw err;
+    }
+};
+
+funcion.printLabel_STP = async (station, P_material, _material, cantidad, subline, serial_num) => {
+    const labelType = "VULC"
+    try {
+        const result_printer = await funcion.getPrinter(station);
+        if (result_printer.length === 0) { throw new Error(`Printer not set for device ${station}`) }
+        const materialResult = await funcion.materialSTP(P_material);
+        if (materialResult.length === 0) { throw new Error(`Part number not set in database ${_material}`) }
+        const data = {
+            printer: result_printer[0].impre,
+            no_sap: materialResult[0].no_sap_stp,
+            assembly: materialResult[0].assembly,
+            cust_part: materialResult[0].cust_part,
+            rack: materialResult[0].rack,
+            rack_return: materialResult[0].rack_return,
+            line: subline,
+            std_pack: `${parseInt(materialResult[0].std_pack)}`,
+            real_quant: `${parseInt(cantidad)}`,
+            serial_num: `${parseInt(serial_num)}`,
+            client: materialResult[0].client,
+            platform: materialResult[0].platform
         };
 
         const printedLabel = await axios({
@@ -539,7 +590,7 @@ funcion.sapRFC_consultaMaterial = async (material_number, storage_location) => {
 }
 
 
-funcion.sapRFC_SbinOnStypeExists = async (storage_type, storage_bin) => {   
+funcion.sapRFC_SbinOnStypeExists = async (storage_type, storage_bin) => {
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
@@ -657,7 +708,37 @@ funcion.sapRFC_transferSlocCheck = async (serial, storage_location, storage_type
         await createSapRfcPool.destroy(managed_client);
         throw err;
     } finally {
-        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client)}}, 500);
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+};
+
+funcion.sapRFC_transferVul_TR_2 = async ( quantity, storage_type, storage_bin, tbnum) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+        const result = await managed_client.call('L_TO_CREATE_TR', {
+            I_LGNUM: '521',
+            I_TBNUM: `${tbnum}`,
+            IT_TRITE:
+                [{
+                    TBPOS: "001",
+                    ANFME: `${quantity}`,
+                    ALTME: "ST",
+                    NLTYP: `${storage_type}`,
+                    NLBER: "001",
+                    NLPLA: `${storage_bin}`,
+                    // NLENR: `${funcion.addLeadingZeros(serial_num, 20)}`,
+                    LETYP: "001"
+                }]
+        });
+
+        return result;
+
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
