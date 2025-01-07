@@ -25,7 +25,7 @@ controller.handlingEXT_POST = async (req, res) => {
             const resultHU = await funcion.sapRFC_HUEXT(storageLocation, material, cantidad)
 
             if(!resultHU.HUKEY){ return res.json({ "key": `Check SAP RFC HUEXT` })}
-           
+
             const labelData = await funcion.getPrinter(station);
             const materialResult = await funcion.materialEXT(material);
 
@@ -70,48 +70,74 @@ controller.handlingEXT_POST = async (req, res) => {
 
 controller.transferEXTRP_POST = async (req, res) => {
     try {
-        // console.log("transferEXTRP_POST", req.body)
-        let serial = req.body.serial
-        let serials_array = serial.split(",")
-        let promises = []
+        // Extract request parameters
+        let serial = req.body.serial;
+        let serials_array = serial.split(",");
+        let promises = [];
         let estacion = req.body.station;
         let errorsArray = [];
-        let storage_type = ""
-        let storage_bin = ""
+        let storage_type = "";
+        let storage_bin = "";
 
-        let resultEstacion = await funcion.getStorageLocation(estacion)
-        let storage_location = resultEstacion[0].storage_location
+        // Fetch storage location based on station
+        let resultEstacion = await funcion.getStorageLocation(estacion);
+        let storage_location = resultEstacion[0].storage_location;
 
+        // Determine storage type and bin based on storage location
         if (storage_location == "0012") {
-            storage_type = "102"
-            storage_bin = "GREEN"
+            storage_type = "102";
+            storage_bin = "GREEN";
         }
         if (storage_location == "0002") {
-            storage_type = "100"
-            storage_bin = "101"
+            storage_type = "100";
+            storage_bin = "101";
         }
 
+        // Process each serial number
         for (let i = 0; i < serials_array.length; i++) {
             let serial_ = serials_array[i];
-            let resultConsultaserial = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial_, 20))
-            
+
+            // Consult SAP for storage unit details
+            let resultConsultaserial = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial_, 20));
+
             if (resultConsultaserial.length == 0) {
-                errorsArray.push({ "key": `Check Serial Number not found`, "abapMsgV1": `${serial_}` })
+                // Handle serial number not found
+                errorsArray.push({ "key": `Check Serial Number not found`, "abapMsgV1": `${serial_}` });
             } else if (resultConsultaserial[0].LGTYP !== "EXT" || resultConsultaserial[0].LGORT !== storage_location) {
-                errorsArray.push({ "key": `Check SU SType: ${resultConsultaserial[0].LGTYP}, SLocation: ${resultConsultaserial[0].LGORT}`, "abapMsgV1": `${serial_}` })
+                // Validate storage type and location
+                errorsArray.push({ "key": `Check SU SType: ${resultConsultaserial[0].LGTYP}, SLocation: ${resultConsultaserial[0].LGORT}`, "abapMsgV1": `${serial_}` });
             } else {
-                let resultTransferEXTRP = await funcion.sapRFC_transferExtRP(serial_, storage_type, storage_bin)
-                promises.push(resultTransferEXTRP)
+                // Validate BDATU and BZEIT are 12 hours apart from current time
+                let bdate = resultConsultaserial[0].BDATU; // Date part
+                let btime = resultConsultaserial[0].BZEIT; // Time part
+                let formattedDate = `${bdate.slice(0, 4)}-${bdate.slice(4, 6)}-${bdate.slice(6, 8)}`;
+                let formattedTime = `${btime.slice(0, 2)}:${btime.slice(2, 4)}:${btime.slice(4, 6)}`;
+
+                let storageDateTime = new Date(`${formattedDate}T${formattedTime}`); // Combine date and time
+                let currentTime = new Date();
+
+                let timeDifference = Math.abs(currentTime - storageDateTime) / (1000 * 60 * 60); // Difference in hours
+
+
+                if (timeDifference < 12) {
+                    errorsArray.push({ "key": `Material not yet rested for 12 hours Check SU`, "abapMsgV1": `${serial_}` });
+                } else {
+                    // Transfer storage unit
+                    let resultTransferEXTRP = await funcion.sapRFC_transferExtRP(serial_, storage_type, storage_bin);
+                    promises.push(resultTransferEXTRP);
+                }
             }
         }
 
+        // Combine results and errors
         const newArray = promises.concat(errorsArray);
         res.json(newArray);
     } catch (err) {
-        console.error("transferEXTRP_POST", err)
+        // Handle errors
+        console.error("transferEXTRP_POST", err);
         res.json(err);
     }
-}
+};
 
 
 
