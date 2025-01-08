@@ -264,6 +264,30 @@ funcion.sapRFC_consultaStorageUnit = async (storage_unit) => {
     }
 };
 
+funcion.sapRFC_consultaDocumentHeader = async (document_number) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+
+        const result = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'MKPF',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `MBLNR EQ '${document_number}' ` }]
+        });
+
+        const columns = result.FIELDS.map(field => field.FIELDNAME);
+        const rows = result.DATA.map(data_ => data_.WA.split(","));
+        const res = rows.map(row => Object.fromEntries(columns.map((key, i) => [key, row[i]])));
+
+        return res;
+    } catch (error) {
+        await createSapRfcPool.destroy(managed_client);
+        throw error;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+};
+
 funcion.sapRFC_transferExtRP = async (serial, storage_type, storage_bin) => {
     let managed_client
     try {

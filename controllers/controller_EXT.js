@@ -24,7 +24,7 @@ controller.handlingEXT_POST = async (req, res) => {
         for (let i = 0; i < numero_etiquetas; i++) {
             const resultHU = await funcion.sapRFC_HUEXT(storageLocation, material, cantidad)
 
-            if(!resultHU.HUKEY){ return res.json({ "key": `Check SAP RFC HUEXT` })}
+            if (!resultHU.HUKEY) { return res.json({ "key": `Check SAP RFC HUEXT` }) }
 
             const labelData = await funcion.getPrinter(station);
             const materialResult = await funcion.materialEXT(material);
@@ -61,7 +61,7 @@ controller.handlingEXT_POST = async (req, res) => {
         res.json(processedResults)
 
     } catch (err) {
-        console.error("handlingEXT_POST",  err);
+        console.error("handlingEXT_POST", err);
         res.json(err)
     }
 }
@@ -107,13 +107,26 @@ controller.transferEXTRP_POST = async (req, res) => {
                 // Validate storage type and location
                 errorsArray.push({ "key": `Check SU SType: ${resultConsultaserial[0].LGTYP}, SLocation: ${resultConsultaserial[0].LGORT}`, "abapMsgV1": `${serial_}` });
             } else {
-                // Validate BDATU and BZEIT are 12 hours apart from current time
-                let bdate = resultConsultaserial[0].BDATU; // Date part
-                let btime = resultConsultaserial[0].BZEIT; // Time part
+                let bdate = resultConsultaserial[0].WDATU; // Date part
+
+                let btimedh = resultDocumentHeaderInfo = await funcion.sapRFC_consultaDocumentHeader(resultConsultaserial[0].WENUM)
+                let btime = btimedh[0].CPUTM; // Time part
                 let formattedDate = `${bdate.slice(0, 4)}-${bdate.slice(4, 6)}-${bdate.slice(6, 8)}`;
                 let formattedTime = `${btime.slice(0, 2)}:${btime.slice(2, 4)}:${btime.slice(4, 6)}`;
 
-                let storageDateTime = new Date(`${formattedDate}T${formattedTime}`); // Combine date and time
+                // Split time into hours, minutes, and seconds
+                let hours = parseInt(btime.slice(0, 2), 10);
+                let minutes = parseInt(btime.slice(2, 4), 10);
+                let seconds = parseInt(btime.slice(4, 6), 10);
+
+                // Subtract 8 hours from the hours component
+                hours = (hours - 8 + 24) % 24; // Ensure hours stay within 0-23
+
+                // Format adjusted time
+                let adjustedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+                // Combine date and adjusted time into a Date object
+                let storageDateTime = new Date(`${formattedDate}T${adjustedTime}`);
                 let currentTime = new Date();
 
                 let timeDifference = Math.abs(currentTime - storageDateTime) / (1000 * 60 * 60); // Difference in hours
@@ -366,7 +379,7 @@ controller.getBinStatusReportEXT_POST = async (req, res) => {
             return res.json({ info_list, error: "N/A" });
         }
     } catch (err) {
-        console.error("getBinStatusReportEXT_POST",err)
+        console.error("getBinStatusReportEXT_POST", err)
         res.json(err)
     }
 };
