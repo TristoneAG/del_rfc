@@ -107,26 +107,23 @@ controller.transferEXTRP_POST = async (req, res) => {
                 // Validate storage type and location
                 errorsArray.push({ "key": `Check SU SType: ${resultConsultaserial[0].LGTYP}, SLocation: ${resultConsultaserial[0].LGORT}`, "abapMsgV1": `${serial_}` });
             } else {
-                let bdate = resultConsultaserial[0].WDATU; // Date part
 
-                let btimedh = resultDocumentHeaderInfo = await funcion.sapRFC_consultaDocumentHeader(resultConsultaserial[0].WENUM)
-                let btime = btimedh[0].CPUTM; // Time part
+
+                let hu_creation_info = await funcion.sapRFC_consultaHUCreationDate(funcion.addLeadingZeros(serial_, 20));
+                let bdate = hu_creation_info[0].TSTAMP
+                // Extract and format date and time
                 let formattedDate = `${bdate.slice(0, 4)}-${bdate.slice(4, 6)}-${bdate.slice(6, 8)}`;
-                let formattedTime = `${btime.slice(0, 2)}:${btime.slice(2, 4)}:${btime.slice(4, 6)}`;
+                let hours = parseInt(bdate.slice(8, 10), 10);
+                let minutes = parseInt(bdate.slice(10, 12), 10);
+                let seconds = parseInt(bdate.slice(12, 14), 10);
 
-                // Split time into hours, minutes, and seconds
-                let hours = parseInt(btime.slice(0, 2), 10);
-                let minutes = parseInt(btime.slice(2, 4), 10);
-                let seconds = parseInt(btime.slice(4, 6), 10);
-
-                // Subtract 8 hours from the hours component
-                hours = (hours - 8 + 24) % 24; // Ensure hours stay within 0-23
 
                 // Format adjusted time
                 let adjustedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 
                 // Combine date and adjusted time into a Date object
                 let storageDateTime = new Date(`${formattedDate}T${adjustedTime}`);
+                storageDateTime.setHours(storageDateTime.getHours() - 6)
                 let currentTime = new Date();
 
                 let timeDifference = Math.abs(currentTime - storageDateTime) / (1000 * 60 * 60); // Difference in hours

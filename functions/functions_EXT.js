@@ -264,22 +264,33 @@ funcion.sapRFC_consultaStorageUnit = async (storage_unit) => {
     }
 };
 
-funcion.sapRFC_consultaDocumentHeader = async (document_number) => {
+funcion.sapRFC_consultaHUCreationDate = async (hu_number) => {
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
 
-        const result = await managed_client.call('RFC_READ_TABLE', {
-            QUERY_TABLE: 'MKPF',
+        const vekp_result = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'VEKP',
             DELIMITER: ",",
-            OPTIONS: [{ TEXT: `MBLNR EQ '${document_number}' ` }]
+            OPTIONS: [{ TEXT: `EXIDV EQ '${hu_number}' ` }],
+            FIELDS: ["VPOBJKEY"]
         });
 
-        const columns = result.FIELDS.map(field => field.FIELDNAME);
-        const rows = result.DATA.map(data_ => data_.WA.split(","));
-        const res = rows.map(row => Object.fromEntries(columns.map((key, i) => [key, row[i]])));
+        const vekp_columns = vekp_result.FIELDS.map(field => field.FIELDNAME);
+        const vekp_rows = vekp_result.DATA.map(data_ => data_.WA.split(","));
+        const vekp_res = vekp_rows.map(row => Object.fromEntries(vekp_columns.map((key, i) => [key, row[i]])));
 
-        return res;
+        const vevw_result = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'VEVW',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `OBJKEY EQ '${vekp_res[0].VPOBJKEY}' ` }]
+        });
+
+        const columns = vevw_result.FIELDS.map(field => field.FIELDNAME);
+        const rows = vevw_result.DATA.map(data_ => data_.WA.split(","));
+        const vevw_res = rows.map(row => Object.fromEntries(columns.map((key, i) => [key, row[i]])));
+
+        return vevw_res;
     } catch (error) {
         await createSapRfcPool.destroy(managed_client);
         throw error;
