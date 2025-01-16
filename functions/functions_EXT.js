@@ -276,6 +276,10 @@ funcion.sapRFC_consultaHUCreationDate = async (hu_number) => {
             FIELDS: ["VPOBJKEY"]
         });
 
+        if (vekp_result.DATA.length === 0) {
+            return [];
+        }
+
         const vekp_columns = vekp_result.FIELDS.map(field => field.FIELDNAME);
         const vekp_rows = vekp_result.DATA.map(data_ => data_.WA.split(","));
         const vekp_res = vekp_rows.map(row => Object.fromEntries(vekp_columns.map((key, i) => [key, row[i]])));

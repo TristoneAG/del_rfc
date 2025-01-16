@@ -66,88 +66,173 @@ controller.handlingEXT_POST = async (req, res) => {
     }
 }
 
-
-
 controller.transferEXTRP_POST = async (req, res) => {
     try {
-        // Extract request parameters
-        let serial = req.body.serial;
-        let serials_array = serial.split(",");
-        let promises = [];
-        let estacion = req.body.station;
-        let errorsArray = [];
-        let storage_type = "";
-        let storage_bin = "";
+        const { serial, station } = req.body;
+        const serialsArray = serial.split(",");
+        const errorsArray = [];
+        const promises = [];
 
         // Fetch storage location based on station
-        let resultEstacion = await funcion.getStorageLocation(estacion);
-        let storage_location = resultEstacion[0].storage_location;
-
-        // Determine storage type and bin based on storage location
-        if (storage_location == "0012") {
-            storage_type = "102";
-            storage_bin = "GREEN";
-        }
-        if (storage_location == "0002") {
-            storage_type = "100";
-            storage_bin = "101";
+        const resultEstacion = await funcion.getStorageLocation(station);
+        if (!resultEstacion || resultEstacion.length === 0) {
+            return res.status(400).json({ error: `Invalid station: ${station}` });
         }
 
-        // Process each serial number
-        for (let i = 0; i < serials_array.length; i++) {
-            let serial_ = serials_array[i];
+        const storageLocation = resultEstacion[0].storage_location;
+        const storageConfig = {
+            "0012": { type: "102", bin: "GREEN" },
+            "0002": { type: "100", bin: "101" }
+        };
 
-            // Consult SAP for storage unit details
-            let resultConsultaserial = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial_, 20));
+        const storageDetails = storageConfig[storageLocation];
+        if (!storageDetails) {
+            return res.status(400).json({ error: `Unsupported storage location: ${storageLocation}` });
+        }
 
-            if (resultConsultaserial.length == 0) {
-                // Handle serial number not found
-                errorsArray.push({ "key": `Check Serial Number not found`, "abapMsgV1": `${serial_}` });
-            } else if (resultConsultaserial[0].LGTYP !== "EXT" || resultConsultaserial[0].LGORT !== storage_location) {
-                // Validate storage type and location
-                errorsArray.push({ "key": `Check SU SType: ${resultConsultaserial[0].LGTYP}, SLocation: ${resultConsultaserial[0].LGORT}`, "abapMsgV1": `${serial_}` });
-            } else {
+        for (const serial of serialsArray) {
+            const paddedSerial = funcion.addLeadingZeros(serial, 20);
 
-
-                let hu_creation_info = await funcion.sapRFC_consultaHUCreationDate(funcion.addLeadingZeros(serial_, 20));
-                let bdate = hu_creation_info[0].TSTAMP
-                // Extract and format date and time
-                let formattedDate = `${bdate.slice(0, 4)}-${bdate.slice(4, 6)}-${bdate.slice(6, 8)}`;
-                let hours = parseInt(bdate.slice(8, 10), 10);
-                let minutes = parseInt(bdate.slice(10, 12), 10);
-                let seconds = parseInt(bdate.slice(12, 14), 10);
-
-
-                // Format adjusted time
-                let adjustedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-
-                // Combine date and adjusted time into a Date object
-                let storageDateTime = new Date(`${formattedDate}T${adjustedTime}`);
-                storageDateTime.setHours(storageDateTime.getHours() - 6)
-                let currentTime = new Date();
-
-                let timeDifference = Math.abs(currentTime - storageDateTime) / (1000 * 60 * 60); // Difference in hours
-
-
-                if (timeDifference < 12) {
-                    errorsArray.push({ "key": `Material not yet rested for 12 hours Check SU`, "abapMsgV1": `${serial_}` });
-                } else {
-                    // Transfer storage unit
-                    let resultTransferEXTRP = await funcion.sapRFC_transferExtRP(serial_, storage_type, storage_bin);
-                    promises.push(resultTransferEXTRP);
+            try {
+                // Consult SAP for storage unit details
+                const resultConsultSerial = await funcion.sapRFC_consultaStorageUnit(paddedSerial);
+                if (!resultConsultSerial || resultConsultSerial.length === 0) {
+                    errorsArray.push({ key: `Check Serial Number not found`, abapMsgV1: serial });
+                    continue;
                 }
+
+                const { LGTYP, LGORT } = resultConsultSerial[0];
+
+                if (LGTYP !== "EXT" || LGORT !== storageLocation) {
+                    errorsArray.push({ key: `Check SU SType: ${LGTYP}, SLocation: ${LGORT}`, abapMsgV1: serial });
+                    continue;
+                }
+
+                // Check HU creation date
+                const huCreationInfo = await funcion.sapRFC_consultaHUCreationDate(paddedSerial);
+                if (huCreationInfo && huCreationInfo.length > 0) {
+                    const bdate = huCreationInfo[0].TSTAMP;
+
+                    // Parse and adjust timestamp
+                    const storageDateTime = new Date(`${bdate.slice(0, 4)}-${bdate.slice(4, 6)}-${bdate.slice(6, 8)}T${bdate.slice(8, 10)}:${bdate.slice(10, 12)}:${bdate.slice(12, 14)}`);
+                    storageDateTime.setHours(storageDateTime.getHours() - 6);
+
+                    const currentTime = new Date();
+                    const timeDifference = Math.abs(currentTime - storageDateTime) / (1000 * 60 * 60);
+
+                    if (timeDifference < 12) {
+                        errorsArray.push({ key: `Material not yet rested for 12 hours`, abapMsgV1: serial });
+                        continue;
+                    }
+                }
+
+                // Transfer storage unit
+                const transferResult = await funcion.sapRFC_transferExtRP(serial, storageDetails.type, storageDetails.bin);
+                promises.push(transferResult);
+            } catch (error) {
+                console.error(`Error processing serial ${serial}:`, error);
+                errorsArray.push({ key: `Error processing serial`, abapMsgV1: serial, error: error.message });
             }
         }
 
         // Combine results and errors
-        const newArray = promises.concat(errorsArray);
-        res.json(newArray);
-    } catch (err) {
-        // Handle errors
-        console.error("transferEXTRP_POST", err);
-        res.json(err);
+        const results = await Promise.all(promises);
+        res.json([...results, ...errorsArray]);
+    } catch (error) {
+        console.error("transferEXTRP_POST", error);
+        res.status(500).json({ error: error.message });
     }
 };
+
+
+// controller.transferEXTRP_POST = async (req, res) => {
+//     try {
+//         // Extract request parameters
+//         let serial = req.body.serial;
+//         let serials_array = serial.split(",");
+//         let promises = [];
+//         let estacion = req.body.station;
+//         let errorsArray = [];
+//         let storage_type = "";
+//         let storage_bin = "";
+
+//         // Fetch storage location based on station
+//         let resultEstacion = await funcion.getStorageLocation(estacion);
+//         let storage_location = resultEstacion[0].storage_location;
+
+//         // Determine storage type and bin based on storage location
+//         if (storage_location == "0012") {
+//             storage_type = "102";
+//             storage_bin = "GREEN";
+//         }
+//         if (storage_location == "0002") {
+//             storage_type = "100";
+//             storage_bin = "101";
+//         }
+
+//         // Process each serial number
+//         for (let i = 0; i < serials_array.length; i++) {
+//             let serial_ = serials_array[i];
+
+//             // Consult SAP for storage unit details
+//             let resultConsultaserial = await funcion.sapRFC_consultaStorageUnit(funcion.addLeadingZeros(serial_, 20));
+
+//             if (resultConsultaserial.length == 0) {
+//                 // Handle serial number not found
+//                 errorsArray.push({ "key": `Check Serial Number not found`, "abapMsgV1": `${serial_}` });
+//             } else if (resultConsultaserial[0].LGTYP !== "EXT" || resultConsultaserial[0].LGORT !== storage_location) {
+//                 // Validate storage type and location
+//                 errorsArray.push({ "key": `Check SU SType: ${resultConsultaserial[0].LGTYP}, SLocation: ${resultConsultaserial[0].LGORT}`, "abapMsgV1": `${serial_}` });
+//             } else {
+
+
+//                 let hu_creation_info = await funcion.sapRFC_consultaHUCreationDate(funcion.addLeadingZeros(serial_, 20));
+//                 if (hu_creation_info.length == 0) {
+//                     // Transfer storage unit
+//                     let resultTransferEXTRP = await funcion.sapRFC_transferExtRP(serial_, storage_type, storage_bin);
+//                     promises.push(resultTransferEXTRP);
+//                 } else {
+
+//                     let bdate = hu_creation_info[0].TSTAMP
+//                     // Extract and format date and time
+//                     let formattedDate = `${bdate.slice(0, 4)}-${bdate.slice(4, 6)}-${bdate.slice(6, 8)}`;
+//                     let hours = parseInt(bdate.slice(8, 10), 10);
+//                     let minutes = parseInt(bdate.slice(10, 12), 10);
+//                     let seconds = parseInt(bdate.slice(12, 14), 10);
+
+
+//                     // Format adjusted time
+//                     let adjustedTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+//                     // Combine date and adjusted time into a Date object
+//                     let storageDateTime = new Date(`${formattedDate}T${adjustedTime}`);
+//                     storageDateTime.setHours(storageDateTime.getHours() - 6)
+//                     let currentTime = new Date();
+
+//                     let timeDifference = Math.abs(currentTime - storageDateTime) / (1000 * 60 * 60); // Difference in hours
+
+
+//                     if (timeDifference < 12) {
+//                         errorsArray.push({ "key": `Material not yet rested for 12 hours Check SU`, "abapMsgV1": `${serial_}` });
+//                     } else {
+//                         // Transfer storage unit
+//                         let resultTransferEXTRP = await funcion.sapRFC_transferExtRP(serial_, storage_type, storage_bin);
+//                         promises.push(resultTransferEXTRP);
+//                     }
+//                 }
+
+//             }
+//         }
+
+//         // Combine results and errors
+//         const newArray = promises.concat(errorsArray);
+//         res.json(newArray);
+//     } catch (err) {
+//         // Handle errors
+//         console.error("transferEXTRP_POST", err);
+//         res.json(err);
+//     }
+// };
 
 
 
