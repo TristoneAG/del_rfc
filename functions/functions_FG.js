@@ -164,21 +164,21 @@ funcion.printLabel = async (data, labelType) => {
     }
 }
 
-funcion.checkPrinterExists = async (printer) => {
-    try {
-        const printerExistsOutput = await axios({
-            method: 'POST',
-            url: `http://${process.env.BARTENDER_SERVER}:${process.env.BARTENDER_PORT}/Integration/CHECK_PRINTER/Execute/`,
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            data: {printer}
-        });
-        return printerExistsOutput;
-    } catch (error) {
-        throw error;
-    }
-}
+// funcion.checkPrinterExists = async (printer) => {
+//     try {
+//         const printerExistsOutput = await axios({
+//             method: 'POST',
+//             url: `http://${process.env.BARTENDER_SERVER}:${process.env.BARTENDER_PORT}/Integration/CHECK_PRINTER/Execute/`,
+//             headers: {
+//                 'Content-Type': 'application/json',
+//             },
+//             data: {printer}
+//         });
+//         return printerExistsOutput;
+//     } catch (error) {
+//         throw error;
+//     }
+// }
 
 //TODO Utilizar transaccion VD53 en esta transaccion se ven los numeros de SAP y el shipto al que se dirigen
 //TODO Crear tabla en SAP donde se asigne modelo de etiqueta a ship to
@@ -188,8 +188,8 @@ funcion.createMESHU = async (material, quantity, employee_id, station, plant_cod
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
-        let printerExists = await funcion.checkPrinterExists(printer);
-        if(printerExists.data !== "TRUE") { throw new Error("Printer not found in Bartender Server"); }
+        // let printerExists = await funcion.checkPrinterExists(printer);
+        // if(printerExists.data !== "TRUE") { throw new Error("Printer not found in Bartender Server"); }
 
         // Search for the material in the tables
         const resultSearch = await funcion.searchUnion(`P${material}`);
