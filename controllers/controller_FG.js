@@ -8,7 +8,7 @@ controller.createMESHU_POST = async (req, res) => {
         const result = await funcion.createMESHU(material, quantity, employee, station, plant, packInstruction, PACKNR, printer );
         res.status(200).json(result);
     } catch (error) {
-        res.status(500).json( {"error": error.message});
+        res.status(500).json( {"error": error.message || error});
     }
 };
 
@@ -18,7 +18,7 @@ controller.createMESHUMass_POST = async (req, res) => {
         const result = await funcion.createMESHUMass( employee_id, station, plant, packInstruction, printer, labels );
         res.status(200).json(result);
     } catch (error) {
-        res.status(500).json( {"error": error.message});
+        res.status(500).json( {"error": error.message || error});
     }
 };
 
