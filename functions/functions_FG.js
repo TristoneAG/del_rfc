@@ -94,7 +94,7 @@ funcion.insertEtiquetasImpresas = async (material, employee, station, serial_num
 }
 
 
-funcion.sapRFC_HUFG = async (material, cantidad, PACKNR) => {
+funcion.sapRFC_HUFG = async (material, cantidad, PACKNR, plant_code) => {
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
@@ -113,7 +113,7 @@ funcion.sapRFC_HUFG = async (material, cantidad, PACKNR) => {
                 PACK_MAT: result_packing_material.DATA[0].WA,
                 HU_GRP3: 'UC11',
                 PACKG_INSTRUCT: PACKNR,
-                PLANT: '5210',
+                PLANT: plant_code,
                 L_PACKG_STATUS_HU: '2',
                 HU_STATUS_INIT: 'A',
             },
@@ -121,7 +121,7 @@ funcion.sapRFC_HUFG = async (material, cantidad, PACKNR) => {
                 HU_ITEM_TYPE: '1',
                 MATERIAL: material,
                 PACK_QTY: cantidad,
-                PLANT: '5210',
+                PLANT: plant_code,
             }],
         });
 
@@ -132,7 +132,7 @@ funcion.sapRFC_HUFG = async (material, cantidad, PACKNR) => {
             HUCHANGED: {
                 CLIENT: '200',
                 PACK_MAT_OBJECT: '07',
-                WAREHOUSE_NUMBER: '521',
+                WAREHOUSE_NUMBER: plant_code.slice(0, -1),
                 HU_STOR_LOC: 'A'
             },
         });
@@ -211,8 +211,9 @@ funcion.createMESHU = async (material, quantity, employee_id, station, plant_cod
         data["emp_num"] = `${employee_id}`;
         data["station"] = `${station}`;
 
-        const resultHU = await funcion.sapRFC_HUFG(material, quantity, PACKNR)
+        const resultHU = await funcion.sapRFC_HUFG(material, quantity, PACKNR, plant_code)
         if (!resultHU.HUKEY) { throw new Error(`Handling unit not created: ${resultHU.RETURN[0].MESSAGE}`); }
+        data["gross_weight"] = parseFloat(resultHU.HUHEADER.TOTAL_WGHT)
         data["serial_num"] = parseInt(resultHU.HUKEY, 10);
 
 
@@ -269,7 +270,7 @@ funcion.createMESHUMass = async (employee_id, station, plant_code, packInstructi
             if (result_packing_object.DATA.length === 0) { throw new Error("Packing Instruction not found, contact Logistics"); }
             let PACKNR = result_packing_object.DATA[0].WA
 
-            const resultHU = await funcion.sapRFC_HUFG(material, quantity, PACKNR)
+            const resultHU = await funcion.sapRFC_HUFG(material, quantity, PACKNR, plant_code)
             if (!resultHU.HUKEY) { throw new Error(`Handling unit not created: ${resultHU.RETURN[0].MESSAGE}`); }
             data["serial_num"] = parseInt(resultHU.HUKEY, 10);
 
@@ -292,6 +293,113 @@ funcion.createMESHUMass = async (employee_id, station, plant_code, packInstructi
     }
 };
 
+funcion.createMESHURFC = async (material, quantity, employee_id, station, plant_code, packInstruction, PACKNR, printer) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+        let printerExists = await funcion.checkPrinterExists(printer);
+        if (printerExists.data.trim() !== "TRUE") { throw new Error("Printer not found in Bartender Server"); }
+        let data = {}
+        // // Search for the material in the tables
+        // const resultSearch = await funcion.searchUnion(`P${material}`);
+        // if (!resultSearch) { throw new Error("Material not found in the database, contact IT & Logistics"); }
+        // // Assign the value of resultSearch to the variable called data
+        // let data = resultSearch[0][0];
+        // let table = resultSearch[1];
 
+        if (packInstruction.endsWith("AC")) {
+            data["alternate_container"] = "YES";
+        } else if (packInstruction.endsWith("AP1")) {
+            data["alternate_container"] = "YES2";
+        } else {
+            data["alternate_container"] = "NO";
+        }
+
+        data["printer"] = `${printer}`;
+        data["real_quant"] = `${quantity}`;
+        data["emp_num"] = `${employee_id}`;
+        data["station"] = `${station}`;
+
+        const resultHU = await funcion.sapRFC_HURFC(material, quantity, PACKNR, plant_code)
+        if (!resultHU.HUKEY) { throw new Error(`Handling unit not created: ${resultHU.RETURN[0].MESSAGE}`); }
+        data["serial_num"] = parseInt(resultHU.HUKEY, 10);
+
+
+        // let printedLabel = await funcion.printLabel(data, table);
+        // if (printedLabel.status !== 200) { throw new Error("Label not printed"); } else{ funcion.insertEtiquetasImpresas(material, employee_id, station, data["serial_num"], packInstruction, printer)}
+        const result_tmes_fm_hu_labels = await managed_client.call('ZPP_TMES_FM_HU_LABELS', {
+
+            HANDLING_UNIT:resultHU.HUKEY,
+            PLANT: plant_code,
+            PRINTER: printer
+            
+        });
+        console.log(result_tmes_fm_hu_labels);
+        const result_tmes_commit = await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" })
+       
+        
+        return data
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        if (err.code === "ERR_BAD_REQUEST") { throw `Error: ${err.message} - ${err.config.url}` }
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+};
+
+funcion.sapRFC_HURFC = async (material, cantidad, PACKNR, plant_code) => {
+    let managed_client
+    try {
+        managed_client = await createSapRfcPool.acquire();
+
+
+
+        const result_packing_material = await managed_client.call('RFC_READ_TABLE', {
+            QUERY_TABLE: 'PACKPO',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `PACKNR EQ '${PACKNR}' AND PAITEMTYPE EQ 'P'` }],
+            FIELDS: ['MATNR']
+        });
+
+        const result_hu_create = await managed_client.call('BAPI_HU_CREATE', {
+            HEADERPROPOSAL: {
+                PACK_MAT: result_packing_material.DATA[0].WA,
+                HU_GRP3: 'UC11',
+                PACKG_INSTRUCT: PACKNR,
+                PLANT: plant_code,
+                L_PACKG_STATUS_HU: '2',
+                HU_STATUS_INIT: 'A',
+            },
+            ITEMSPROPOSAL: [{
+                HU_ITEM_TYPE: '1',
+                MATERIAL: material,
+                PACK_QTY: cantidad,
+                PLANT: plant_code,
+            }],
+        });
+
+        const result_commit = await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
+
+        const result_hu_change_header = await managed_client.call('BAPI_HU_CHANGE_HEADER', {
+            HUKEY: result_hu_create.HUKEY,
+            HUCHANGED: {
+                CLIENT: '200',
+                PACK_MAT_OBJECT: '07',
+                WAREHOUSE_NUMBER: plant_code.slice(0, -1),
+                HU_STOR_LOC: 'A'
+            },
+        });
+
+        const result_commit2 = await managed_client.call("BAPI_TRANSACTION_COMMIT", { WAIT: "X" });
+
+        return result_hu_create
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+}
 
 module.exports = funcion;
