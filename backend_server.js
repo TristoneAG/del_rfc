@@ -4,8 +4,8 @@ const app = express()
 const morgan = require('morgan')
 
 // Validate environment variables
-if (!process.env.BACKEND_PORT) { console.error('Missing environment variable: BACKEND_PORT'); process.exit(1);}
-const portNumber = process.env.BACKEND_PORT || process.env.BACKEND_PORT || 5000
+if (!process.env.PORT) { console.error('Missing environment variable: PORT'); process.exit(1);}
+const portNumber = process.env.PORT || process.env.PORT || 5001
 
 app.use(morgan('dev')) // Morgan needs to be before the routes declaration
 app.use(express.urlencoded({ extended: true }))
