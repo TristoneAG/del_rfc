@@ -32,6 +32,16 @@ controller.createMESHURFC_POST = async (req, res) => {
     }
 };
 
+controller.createMESMaterialSearch_POST = async (req, res) => {
+    try {
+        const { material, plant } = req.body;
+        const result = await funcion.createMESMaterialSearch(material, plant);
+        res.status(200).json(result);
+    } catch (error) {
+        res.status(500).json( {"error": error.message || error});
+    }
+};
+
 module.exports = controller;
 
 
