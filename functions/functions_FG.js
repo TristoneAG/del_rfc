@@ -76,6 +76,158 @@ funcion.searchUnion = async (noSap) => {
     }
 }
 
+// Validate and prepare RFC_READ_TABLE options before execution to prevent SAP dumps
+// Automatically splits long queries that exceed SAP's 72 character limit per OPTIONS.TEXT
+funcion.validateRfcReadTableOptions = (options) => {
+    const errors = [];
+    const MAX_QUERY_LENGTH = 72; // SAP RFC_READ_TABLE limit
+    
+    // Helper function to split long query text into multiple OPTIONS entries
+    const splitQueryText = (queryText, maxLength = MAX_QUERY_LENGTH) => {
+        if (queryText.length <= maxLength) {
+            return [{ TEXT: queryText }];
+        }
+        
+        // Split by AND clauses, preserving the AND keyword
+        const andRegex = /\s+AND\s+/gi;
+        const parts = queryText.split(andRegex);
+        
+        const splitOptions = [];
+        let currentQuery = '';
+        
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            const andKeyword = i > 0 ? ' AND ' : '';
+            const potentialQuery = currentQuery + andKeyword + part;
+            
+            if (potentialQuery.length <= maxLength) {
+                currentQuery = potentialQuery;
+            } else {
+                // If current query is not empty, save it and start a new one
+                if (currentQuery) {
+                    splitOptions.push({ TEXT: currentQuery.trim() });
+                }
+                
+                // If a single part exceeds maxLength, throw error
+                if (part.length > maxLength) {
+                    throw new Error(`Query part exceeds maximum length of ${maxLength} characters: ${part.substring(0, 50)}...`);
+                }
+                
+                currentQuery = part;
+            }
+        }
+        
+        // Add the last query if it exists
+        if (currentQuery) {
+            splitOptions.push({ TEXT: currentQuery.trim() });
+        }
+        
+        return splitOptions;
+    };
+    
+    // Validate table name
+    if (!options.QUERY_TABLE || typeof options.QUERY_TABLE !== 'string') {
+        errors.push('QUERY_TABLE is required and must be a string');
+    }
+    
+    // Validate delimiter
+    if (!options.DELIMITER || typeof options.DELIMITER !== 'string') {
+        errors.push('DELIMITER is required and must be a string');
+    }
+    
+    // Validate OPTIONS array
+    if (!options.OPTIONS || !Array.isArray(options.OPTIONS) || options.OPTIONS.length === 0) {
+        errors.push('OPTIONS is required and must be a non-empty array');
+    } else {
+        // Process each option: validate and split if necessary
+        const processedOptions = [];
+        
+        options.OPTIONS.forEach((option, index) => {
+            if (!option.TEXT || typeof option.TEXT !== 'string') {
+                errors.push(`OPTIONS[${index}].TEXT is required and must be a string`);
+            } else {
+                const queryText = option.TEXT;
+                
+                // Split query if it exceeds maximum length
+                let queriesToValidate = [];
+                if (queryText.length > MAX_QUERY_LENGTH) {
+                    try {
+                        const splitOptions = splitQueryText(queryText, MAX_QUERY_LENGTH);
+                        processedOptions.push(...splitOptions);
+                        queriesToValidate = splitOptions.map(opt => opt.TEXT);
+                    } catch (splitError) {
+                        errors.push(`OPTIONS[${index}].TEXT cannot be split: ${splitError.message}`);
+                    }
+                } else {
+                    processedOptions.push(option);
+                    queriesToValidate = [queryText];
+                }
+                
+                // Validate each query text (original or split)
+                queriesToValidate.forEach((text, textIndex) => {
+                    // Check for dangerous SQL patterns that could cause dumps
+                    const dangerousPatterns = [
+                        /;\s*(DROP|DELETE|UPDATE|INSERT|ALTER|CREATE|TRUNCATE)/i,
+                        /--/,
+                        /\/\*/,
+                        /UNION/i,
+                        /EXEC/i,
+                        /EXECUTE/i,
+                        /SCRIPT/i
+                    ];
+                    
+                    dangerousPatterns.forEach(pattern => {
+                        if (pattern.test(text)) {
+                            errors.push(`OPTIONS[${index}].TEXT[${textIndex}] contains potentially dangerous SQL pattern`);
+                        }
+                    });
+                    
+                    // Validate query format (should follow: FIELD EQ 'value' AND ...)
+                    // Basic format check - should contain at least one field comparison
+                    if (!/^\s*[A-Z0-9_]+\s+(EQ|NE|LT|LE|GT|GE|LIKE|IN)\s+/.test(text.toUpperCase())) {
+                        errors.push(`OPTIONS[${index}].TEXT[${textIndex}] does not follow expected format (FIELD EQ 'value')`);
+                    }
+                    
+                    // Check for balanced quotes
+                    const singleQuotes = (text.match(/'/g) || []).length;
+                    if (singleQuotes % 2 !== 0) {
+                        errors.push(`OPTIONS[${index}].TEXT[${textIndex}] has unbalanced single quotes`);
+                    }
+                    
+                    // Check individual query length
+                    if (text.length > MAX_QUERY_LENGTH) {
+                        errors.push(`OPTIONS[${index}].TEXT[${textIndex}] exceeds maximum length of ${MAX_QUERY_LENGTH} characters`);
+                    }
+                });
+            }
+        });
+        
+        // Replace OPTIONS with processed (split) options if any were split
+        if (processedOptions.length !== options.OPTIONS.length) {
+            options.OPTIONS = processedOptions;
+        }
+    }
+    
+    // Validate FIELDS if provided
+    if (options.FIELDS !== undefined) {
+        if (!Array.isArray(options.FIELDS)) {
+            errors.push('FIELDS must be an array');
+        } else {
+            options.FIELDS.forEach((field, index) => {
+                if (typeof field !== 'string' || field.trim() === '') {
+                    errors.push(`FIELDS[${index}] must be a non-empty string`);
+                }
+            });
+        }
+    }
+    
+    if (errors.length > 0) {
+        throw new Error(`RFC_READ_TABLE validation failed:\n${errors.join('\n')}`);
+    }
+    
+    return true;
+};
+
 
 funcion.insertEtiquetasImpresas = async (material, employee, station, serial_num, packInstruction, printer) => {
     try {
@@ -99,14 +251,14 @@ funcion.sapRFC_HUFG = async (material, cantidad, PACKNR, plant_code) => {
     try {
         managed_client = await createSapRfcPool.acquire();
 
-
-
-        const result_packing_material = await managed_client.call('RFC_READ_TABLE', {
+        const packingMaterialOptions = {
             QUERY_TABLE: 'PACKPO',
             DELIMITER: ",",
             OPTIONS: [{ TEXT: `PACKNR EQ '${PACKNR}' AND PAITEMTYPE EQ 'P'` }],
             FIELDS: ['MATNR']
-        });
+        };
+        funcion.validateRfcReadTableOptions(packingMaterialOptions);
+        const result_packing_material = await managed_client.call('RFC_READ_TABLE', packingMaterialOptions);
 
         const result_hu_create = await managed_client.call('BAPI_HU_CREATE', {
             HEADERPROPOSAL: {
@@ -261,12 +413,14 @@ funcion.createMESHUMass = async (employee_id, station, plant_code, packInstructi
             data["emp_num"] = `${employee_id}`;
             data["station"] = `${station}`;
 
-            const result_packing_object = await managed_client.call('RFC_READ_TABLE', {
+            const packingObjectOptions = {
                 QUERY_TABLE: 'PACKKP',
                 DELIMITER: ",",
                 OPTIONS: [{ TEXT: `POBJID EQ '${packInstruction}'` }],
                 FIELDS: ['PACKNR']
-            });
+            };
+            funcion.validateRfcReadTableOptions(packingObjectOptions);
+            const result_packing_object = await managed_client.call('RFC_READ_TABLE', packingObjectOptions);
             if (result_packing_object.DATA.length === 0) { throw new Error("Packing Instruction not found, contact Logistics"); }
             let PACKNR = result_packing_object.DATA[0].WA
 
@@ -297,8 +451,8 @@ funcion.createMESHURFC = async (material, quantity, employee_id, station, plant_
     let managed_client
     try {
         managed_client = await createSapRfcPool.acquire();
-        let printerExists = await funcion.checkPrinterExists(printer);
-        if (printerExists.data.trim() !== "TRUE") { throw new Error("Printer not found in Bartender Server"); }
+        // let printerExists = await funcion.checkPrinterExists(printer);
+        // if (printerExists.data.trim() !== "TRUE") { throw new Error("Printer not found in Bartender Server"); }
         let data = {}
         // // Search for the material in the tables
         // const resultSearch = await funcion.searchUnion(`P${material}`);
@@ -353,14 +507,14 @@ funcion.sapRFC_HURFC = async (material, cantidad, PACKNR, plant_code) => {
     try {
         managed_client = await createSapRfcPool.acquire();
 
-
-
-        const result_packing_material = await managed_client.call('RFC_READ_TABLE', {
+        const packingMaterialOptions = {
             QUERY_TABLE: 'PACKPO',
             DELIMITER: ",",
             OPTIONS: [{ TEXT: `PACKNR EQ '${PACKNR}' AND PAITEMTYPE EQ 'P'` }],
             FIELDS: ['MATNR']
-        });
+        };
+        funcion.validateRfcReadTableOptions(packingMaterialOptions);
+        const result_packing_material = await managed_client.call('RFC_READ_TABLE', packingMaterialOptions);
 
         const result_hu_create = await managed_client.call('BAPI_HU_CREATE', {
             HEADERPROPOSAL: {
@@ -402,4 +556,114 @@ funcion.sapRFC_HURFC = async (material, cantidad, PACKNR, plant_code) => {
     }
 }
 
+
+funcion.createMESMaterialSearch = async (material, plant) => {
+    let managed_client = null
+    const discardedStorageTypes = ["999", "102", "100"];
+    const discardedStorageBins = ["SCHROTT", "199"];
+    try {
+        managed_client = await createSapRfcPool.acquire();
+
+        const upperMaterial = material.toUpperCase();
+
+        // Section 1: Fetch material description
+        const materialDescOptions = {
+            QUERY_TABLE: 'MAKT',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `MATNR EQ '${upperMaterial}' AND SPRAS EQ 'E'` }], //TODO: Change to the correct language
+            FIELDS: ['MAKTX']
+        };
+        funcion.validateRfcReadTableOptions(materialDescOptions);
+        const materialDescResult = await managed_client.call('RFC_READ_TABLE', materialDescOptions);
+        const materialDescription = materialDescResult.DATA?.length > 0 
+            ? materialDescResult.DATA[0].WA.trim() 
+            : '';
+
+        // Section 2: Fetch LQUA table data
+        const lquaOptions = {
+            QUERY_TABLE: 'LQUA',
+            DELIMITER: ",",
+            OPTIONS: [{ TEXT: `MATNR EQ '${upperMaterial}' AND WERKS EQ '${plant}'` }]
+        };
+        funcion.validateRfcReadTableOptions(lquaOptions);
+        const lquaResult = await managed_client.call('RFC_READ_TABLE', lquaOptions);
+
+        // Section 3: Parse LQUA table result into array of objects
+        const columns = lquaResult.FIELDS.map(field => field.FIELDNAME);
+        const rows = lquaResult.DATA.map(data => data.WA.split(","));
+        const lquaData = rows.map(row => Object.fromEntries(columns.map((key, i) => [key, row[i]])));
+
+        // Helper function to parse SAP numeric format (handles trailing space or dash for negative)
+        const parseSapNumber = (value) => {
+            if (!value) return 0;
+            const str = value.toString().trim();
+            if (str === '' || str === '0' || str === '0.000') return 0;
+            const isNegative = str.endsWith('-');
+            const numStr = isNegative ? str.slice(0, -1).trim() : str;
+            const num = parseFloat(numStr) || 0;
+            return isNegative ? -num : num;
+        };
+
+        // Group by storage location -> storage type -> storage bin and sum GESME
+        const groupedData = lquaData.reduce((grouped, item) => {
+            const storageLocation = item.LGORT?.trim() || '';
+            const storageType = item.LGTYP?.trim() || '';
+            const storageBin = item.LGPLA?.trim() || '';
+            const gesmeValue = parseSapNumber(item.GESME);
+            
+            // Initialize nested structure if needed
+            if (!grouped[storageLocation]) grouped[storageLocation] = {};
+            if (!grouped[storageLocation][storageType]) grouped[storageLocation][storageType] = {};
+            
+            // Sum GESME for duplicate storage bins
+            if (grouped[storageLocation][storageType][storageBin]) {
+                grouped[storageLocation][storageType][storageBin].GESME += gesmeValue;
+            } else {
+                grouped[storageLocation][storageType][storageBin] = { GESME: gesmeValue };
+            }
+            
+            return grouped;
+        }, {});
+        
+        
+        
+        // Section 4: Remove discarded entries and clean up empty structures
+        Object.keys(groupedData).forEach(storageLocation => {
+            Object.keys(groupedData[storageLocation]).forEach(storageType => {
+                // Remove entire storage type if it's discarded
+                if (discardedStorageTypes.includes(storageType)) {
+                    delete groupedData[storageLocation][storageType];
+                    return;
+                }
+                
+                // Remove discarded storage bins
+                Object.keys(groupedData[storageLocation][storageType]).forEach(storageBin => {
+                    if (discardedStorageBins.includes(storageBin)) {
+                        delete groupedData[storageLocation][storageType][storageBin];
+                    }
+                });
+                
+                // Remove empty storage types
+                if (Object.keys(groupedData[storageLocation][storageType]).length === 0) {
+                    delete groupedData[storageLocation][storageType];
+                }
+            });
+            
+            // Remove empty storage locations
+            if (Object.keys(groupedData[storageLocation]).length === 0) {
+                delete groupedData[storageLocation];
+            }
+        });
+        
+        // Add material description to the result
+        groupedData.materialDescription = materialDescription;
+        
+        return groupedData;
+    } catch (err) {
+        await createSapRfcPool.destroy(managed_client);
+        throw err;
+    } finally {
+        setTimeout(() => { if (managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+    }
+}
 module.exports = funcion;

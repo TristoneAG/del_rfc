@@ -24,7 +24,7 @@ controller.handlingEXT_POST = async (req, res) => {
         for (let i = 0; i < numero_etiquetas; i++) {
             const resultHU = await funcion.sapRFC_HUEXT(storageLocation, material, cantidad)
 
-            if (!resultHU.HUKEY) { return res.json({ "key": `Check SAP RFC HUEXT` }) }
+            if (!resultHU.HUKEY) { return res.json({ "key": `Check SAP RFC HUEXT`, resultHU }) }
 
             const labelData = await funcion.getPrinter(station);
             const materialResult = await funcion.materialEXT(material);
