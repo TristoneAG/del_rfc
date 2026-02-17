@@ -66,9 +66,9 @@ controller.RFC_MB1A_POST = async (req, res) => {
 
 controller.RFC_MB1A_711_712_POST = async (req, res) => {
     try {
-        const { scrap_material, header, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date, movement_type } = req.body;
+        const { scrap_material, header, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date, movement_type, issueStorageType, issueStorageBin } = req.body;
         
-        const result = await funcion.RFC_MB1A_711_712(scrap_material, header, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date, movement_type);
+        const result = await funcion.RFC_MB1A_711_712(scrap_material, header, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date, movement_type, issueStorageType, issueStorageBin);
 
         res.status(200).json(result);
     } catch (error) {

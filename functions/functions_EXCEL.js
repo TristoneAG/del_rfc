@@ -13,38 +13,38 @@ const createSapRfcPool = require('../connections/sap/connection_SAP');
  */
 funcion.prepareSapSqlQuery = (queryText, expectedPattern = null) => {
     const MAX_LENGTH = 72;
-    
+
     // Validate input
     if (!queryText || typeof queryText !== 'string') {
         throw new Error('SQL query must be a non-empty string');
     }
 
     const trimmedQuery = queryText.trim();
-    
+
     if (!trimmedQuery) {
         throw new Error('SQL query cannot be empty after trimming');
     }
 
     // Check for SQL injection patterns and invalid characters that can break SAP OpenSQL queries
     // Comment markers, statement terminators, invalid quote types, and commas
-    if (trimmedQuery.includes('--') || 
-        trimmedQuery.includes('/*') || 
-        trimmedQuery.includes('*/') || 
+    if (trimmedQuery.includes('--') ||
+        trimmedQuery.includes('/*') ||
+        trimmedQuery.includes('*/') ||
         trimmedQuery.includes(';') ||
-        trimmedQuery.includes('"') || 
-        trimmedQuery.includes('`') || 
+        trimmedQuery.includes('"') ||
+        trimmedQuery.includes('`') ||
         trimmedQuery.includes('´') ||
         trimmedQuery.includes(',')) {
         throw new Error(`SQL query contains potentially dangerous patterns or invalid characters: ${trimmedQuery}`);
     }
-    
+
     // Validate single quotes are properly paired and used correctly
     // Count single quotes - should be even number (opening and closing for string literals)
     const singleQuoteCount = (trimmedQuery.match(/'/g) || []).length;
     if (singleQuoteCount % 2 !== 0) {
         throw new Error(`SQL query has unpaired single quotes: ${trimmedQuery}`);
     }
-    
+
     // Check for escaped single quotes (two consecutive quotes) which could be used for injection
     if (trimmedQuery.includes("''")) {
         throw new Error(`SQL query contains escaped single quotes which could be dangerous: ${trimmedQuery}`);
@@ -54,7 +54,7 @@ funcion.prepareSapSqlQuery = (queryText, expectedPattern = null) => {
     if (expectedPattern && !expectedPattern.test(trimmedQuery)) {
         throw new Error(`Invalid SQL query structure. Got: ${trimmedQuery}`);
     }
-    
+
     // If query fits in one OPTIONS entry, return it
     if (trimmedQuery.length <= MAX_LENGTH) {
         return [{ TEXT: trimmedQuery }];
@@ -66,29 +66,29 @@ funcion.prepareSapSqlQuery = (queryText, expectedPattern = null) => {
     const operatorRegex = /\s+(AND|OR)\s+/gi;
     const breakPoints = [];
     let match;
-    
+
     while ((match = operatorRegex.exec(trimmedQuery)) !== null) {
         breakPoints.push({
             position: match.index + match[0].length, // Position after the operator
             operator: match[1].toUpperCase() // AND or OR
         });
     }
-    
+
     if (breakPoints.length === 0) {
         // No AND/OR found, cannot split safely - throw error
         throw new Error(`Query exceeds ${MAX_LENGTH} characters and cannot be split safely (no AND/OR operators found): ${trimmedQuery}`);
     }
-    
+
     let startPos = 0;
     let currentChunk = '';
-    
+
     for (let i = 0; i < breakPoints.length; i++) {
         const breakPoint = breakPoints[i];
         const segment = trimmedQuery.substring(startPos, breakPoint.position).trim();
-        
+
         // Test if adding this segment to current chunk would exceed limit
         const testChunk = currentChunk ? `${currentChunk} ${segment}` : segment;
-        
+
         if (testChunk.length <= MAX_LENGTH) {
             currentChunk = testChunk;
         } else {
@@ -98,16 +98,16 @@ funcion.prepareSapSqlQuery = (queryText, expectedPattern = null) => {
             }
             // Start new chunk with the operator and segment
             currentChunk = `${breakPoint.operator} ${segment}`;
-            
+
             // If even this is too long, throw error
             if (currentChunk.length > MAX_LENGTH) {
                 throw new Error(`Query segment exceeds ${MAX_LENGTH} characters: ${currentChunk}`);
             }
         }
-        
+
         startPos = breakPoint.position;
     }
-    
+
     // Add remaining part after last break point
     const remaining = trimmedQuery.substring(startPos).trim();
     if (remaining) {
@@ -120,19 +120,19 @@ funcion.prepareSapSqlQuery = (queryText, expectedPattern = null) => {
             }
             // Add AND prefix if not first option
             currentChunk = options.length > 0 ? `AND ${remaining}` : remaining;
-            
+
             // Validate remaining chunk length
             if (currentChunk.length > MAX_LENGTH) {
                 throw new Error(`Query segment exceeds ${MAX_LENGTH} characters: ${currentChunk}`);
             }
         }
     }
-    
+
     // Add final chunk
     if (currentChunk) {
         options.push({ TEXT: currentChunk });
     }
-    
+
     return options;
 };
 
@@ -171,19 +171,19 @@ funcion.RFC_REQUISITION = async (requisition_number, requisition_item) => {
         // Enhanced sanitization for OpenSQL safety - remove all special chars and limit length
         const safeReqNumber = String(sanitizedReqNumber).trim().replace(/[^A-Za-z0-9]/g, '').substring(0, 10);
         const safeReqItem = String(sanitizedReqItem).trim().replace(/[^0-9]/g, '').substring(0, 5);
-        
+
         // Validate sanitized values are not empty
         if (!safeReqNumber || !safeReqItem) {
             throw new Error('Invalid requisition number or item after sanitization');
         }
-        
+
         // Build safe query text
         const queryText = `BANFN EQ '${safeReqNumber}' AND BNFPO EQ '${safeReqItem}'`;
-        
+
         // Validate and prepare SQL statement for SAP (validates safety, prevents dumps, splits if needed)
         // No pattern needed since we build the query from sanitized inputs
         const optionsArray = funcion.prepareSapSqlQuery(queryText);
-        
+
         const result_req = await managed_client.call('RFC_READ_TABLE', {
             QUERY_TABLE: 'EBAN',
             DELIMITER: ";",
@@ -200,7 +200,7 @@ funcion.RFC_REQUISITION = async (requisition_number, requisition_item) => {
         }
 
         const dataRow = result_req.DATA[0].WA.split(';');
-        
+
         // Map fields using field names for better maintainability
         const fieldMap = {
             po_number: dataRow[0],
@@ -262,15 +262,15 @@ funcion.RFC_PO = async (po_number, po_item) => {
         // EBELN is typically 10 chars alphanumeric, EBELP is typically 5 chars numeric
         const safePONumber = String(sanitizedPONumber).trim().replace(/[^A-Za-z0-9]/g, '').substring(0, 10);
         const safePOItem = String(sanitizedPOItem).trim().replace(/[^0-9]/g, '').substring(0, 5);
-        
+
         // Validate sanitized values are not empty
         if (!safePONumber || !safePOItem) {
             throw new Error('Invalid PO number or item after sanitization');
         }
-        
+
         // Build safe query text
         const queryText = `EBELN EQ '${safePONumber}' AND EBELP EQ '${safePOItem}'`;
-        
+
         // Validate and prepare SQL statement for SAP (validates safety, prevents dumps, splits if needed)
         const optionsArray = funcion.prepareSapSqlQuery(queryText);
 
@@ -308,7 +308,7 @@ funcion.RFC_PO = async (po_number, po_item) => {
 
         // Filter out records that have a matching reversal (movement type 102)
         const filteredRecords = allRecords.filter(record => {
-            const hasReversal = allRecords.some(r => 
+            const hasReversal = allRecords.some(r =>
                 r.reference_doc === record.reference_doc && r.movement_type === '102'
             );
             return !hasReversal;
@@ -343,15 +343,15 @@ funcion.RFC_VENDOR = async (vendor_number) => {
         // Enhanced sanitization for OpenSQL safety - remove all special chars and limit length
         // LIFNR is typically 10 chars alphanumeric
         const safeVendor = String(sanitizedVendor).trim().replace(/[^A-Za-z0-9]/g, '').substring(0, 10);
-        
+
         // Validate sanitized value is not empty
         if (!safeVendor) {
             throw new Error('Invalid vendor number after sanitization');
         }
-        
+
         // Build safe query text
         const queryText = `LIFNR EQ '${safeVendor}'`;
-        
+
         // Validate and prepare SQL statement for SAP (validates safety, prevents dumps, splits if needed)
         const optionsArray = funcion.prepareSapSqlQuery(queryText);
 
@@ -410,15 +410,15 @@ funcion.RFC_ACCOUNT = async (requisition_number, requisition_item) => {
         // BANFN is typically 10 chars alphanumeric, BNFPO is typically 5 chars numeric
         const safeReqNumber = String(sanitizedReqNumber).trim().replace(/[^A-Za-z0-9]/g, '').substring(0, 10);
         const safeReqItem = String(sanitizedReqItem).trim().replace(/[^0-9]/g, '').substring(0, 5);
-        
+
         // Validate sanitized values are not empty
         if (!safeReqNumber || !safeReqItem) {
             throw new Error('Invalid requisition number or item after sanitization');
         }
-        
+
         // Build safe query text
         const queryText = `BANFN EQ '${safeReqNumber}' AND BNFPO EQ '${safeReqItem}'`;
-        
+
         // Validate and prepare SQL statement for SAP (validates safety, prevents dumps, splits if needed)
         const optionsArray = funcion.prepareSapSqlQuery(queryText);
 
@@ -465,7 +465,7 @@ funcion.L_TO_CREATE_SINGLE = async (params) => {
             throw new Error(`${field} is required`);
         }
     }
-    
+
     // Validate that either I_VLENR (from storage unit) OR I_VLTYP/I_VLPLA (from storage type/bin) is provided
     if (!params.I_VLENR && (!params.I_VLTYP || !params.I_VLPLA)) {
         throw new Error('Either I_VLENR (From Storage Unit) or I_VLTYP/I_VLPLA (From Storage Type/Bin) is required');
@@ -489,7 +489,7 @@ funcion.L_TO_CREATE_SINGLE = async (params) => {
             I_NLBER: String(params.I_NLBER || '001').trim(),       // To Storage Section (default: 001)
             I_NLPLA: String(params.I_NLPLA || '').trim()           // To Storage Bin
         };
-        
+
         // Handle From Storage - either Storage Unit (I_VLENR) or Storage Type/Bin (I_VLTYP/I_VLPLA/I_VLBER)
         if (params.I_VLENR) {
             // Withdrawal from Storage Unit
@@ -500,7 +500,7 @@ funcion.L_TO_CREATE_SINGLE = async (params) => {
             importParams.I_VLBER = String(params.I_VLBER || '001').trim();       // From Storage Section (default: 001)
             importParams.I_VLPLA = String(params.I_VLPLA || '').trim();         // From Storage Bin
         }
-        
+
         // Handle To Storage - either Storage Unit (I_NLENR) or just Storage Type/Bin
         if (params.I_NLENR) {
             importParams.I_NLENR = String(params.I_NLENR || '').padStart(20, '0'); // To Storage Unit (formatted to 20 digits)
@@ -537,7 +537,7 @@ funcion.L_TO_CREATE_SINGLE = async (params) => {
 
 funcion.RFC_MB1A = async (scrap_material, header, scrap_reason, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date) => {
     // Input validation
-    if ( !header || !scrap_reason || !storage_location || !scrap_cost_center || 
+    if (!header || !scrap_reason || !storage_location || !scrap_cost_center ||
         !scrap_component || !scrap_quantity || !posting_date) {
         throw new Error('All parameters are required: scrap_material, header, scrap_reason, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date');
     }
@@ -548,14 +548,14 @@ funcion.RFC_MB1A = async (scrap_material, header, scrap_reason, storage_location
 
         // Format posting date (SAP expects YYYYMMDD format)
         const formattedDate = String(posting_date).replace(/-/g, '').replace(/\//g, '').substring(0, 8);
-        
+
         // Format material number to SAP internal format (18 characters, left-aligned, space-padded)
         const formattedMaterial = String(scrap_component).trim().padEnd(18, ' ');
         const formattedStorageLoc = String(storage_location).padStart(4, '0');
         const formattedReference = String(scrap_material).trim();
         const costCenterInput = String(scrap_cost_center).trim();
         const formattedCostCenter = costCenterInput.length <= 10 ? costCenterInput.padStart(10, '0') : costCenterInput;
-        
+
         // Prepare BAPI_GOODSMVT_CREATE parameters
         const result_goodsmvt = await managed_client.call('BAPI_GOODSMVT_CREATE', {
             GOODSMVT_CODE: {
@@ -594,31 +594,39 @@ funcion.RFC_MB1A = async (scrap_material, header, scrap_reason, storage_location
             if (documentNumber) {
                 return { result: `Material document ${documentNumber} posted`, error: "N/A" };
             } else {
-                return {result: "N/A", error: "Document created but document number not returned"};
+                return { result: "N/A", error: "Document created but document number not returned" };
             }
         }
 
     } catch (error) {
         await createSapRfcPool.destroy(managed_client);
-        return {result: "N/A", error: error.message || String(error)};
+        return { result: "N/A", error: error.message || String(error) };
     } finally {
         setTimeout(() => { if (managed_client && managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
     }
 };
 
-funcion.RFC_MB1A_711_712 = async (scrap_material, header, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date, movement_type) => {
-    // Input validation - scrap_reason is optional for movements 711/712
-    if (!header || !storage_location || !scrap_cost_center || 
-        !scrap_component || !scrap_quantity || !posting_date || !movement_type) {
-        throw new Error('All parameters are required: scrap_material, header, storage_location, scrap_cost_center, scrap_component, scrap_quantity, posting_date, movement_type');
+funcion.RFC_MB1A_711_712 = async (
+    scrap_material,
+    header,
+    storage_location,
+    scrap_cost_center,
+    scrap_component,
+    scrap_quantity,
+    posting_date,
+    movement_type,
+    issueStorageType,
+    issueStorageBin
+) => {
+    if (!header || !storage_location || !scrap_cost_center || !scrap_component || !scrap_quantity || !posting_date || !movement_type || !issueStorageType || !issueStorageBin) {
+        throw new Error('All parameters are required');
     }
 
-    // Validate movement_type must be 711 or 712
     const moveType = String(movement_type).trim();
     if (moveType !== '711' && moveType !== '712') {
         return {
             result: "N/A",
-            error: `Invalid movement type. Movement type must be 711 or 712, received: ${moveType}`
+            error: `Invalid movement type ${moveType}`
         };
     }
 
@@ -626,21 +634,14 @@ funcion.RFC_MB1A_711_712 = async (scrap_material, header, storage_location, scra
     try {
         managed_client = await createSapRfcPool.acquire();
 
-        // Format posting date (SAP expects YYYYMMDD format)
         const formattedDate = String(posting_date).replace(/-/g, '').replace(/\//g, '').substring(0, 8);
-        
-        // Format material number to SAP internal format (18 characters, left-aligned, space-padded)
         const formattedMaterial = String(scrap_component).trim().padEnd(18, ' ');
         const formattedStorageLoc = String(storage_location).padStart(4, '0');
         const formattedReference = String(scrap_material).trim();
-        const costCenterInput = String(scrap_cost_center).trim();
-        const formattedCostCenter = costCenterInput.length <= 10 ? costCenterInput.padStart(10, '0') : costCenterInput;
-        
-        // Prepare BAPI_GOODSMVT_CREATE parameters
+        const formattedCostCenter = String(scrap_cost_center).trim().padStart(10, '0');
+
         const result_goodsmvt = await managed_client.call('BAPI_GOODSMVT_CREATE', {
-            GOODSMVT_CODE: {
-                GM_CODE: '03' // Goods issue code (03 for goods issue)
-            },
+            GOODSMVT_CODE: { GM_CODE: '03' },
             GOODSMVT_HEADER: {
                 PSTNG_DATE: formattedDate,
                 DOC_DATE: formattedDate,
@@ -651,39 +652,70 @@ funcion.RFC_MB1A_711_712 = async (scrap_material, header, storage_location, scra
                 MATERIAL: formattedMaterial,
                 PLANT: '5210',
                 STGE_LOC: formattedStorageLoc,
-                MOVE_TYPE: moveType, // Use the provided movement type (711 or 712)
+                MOVE_TYPE: moveType,
                 ENTRY_QNT: String(scrap_quantity).trim(),
                 COSTCENTER: formattedCostCenter,
             }]
         });
 
-        // Check for errors - simple check like the working example
-        if (result_goodsmvt.RETURN && result_goodsmvt.RETURN[0]?.TYPE === 'E') {
+        if (result_goodsmvt.RETURN?.[0]?.TYPE === 'E') {
             await managed_client.call('BAPI_TRANSACTION_ROLLBACK', {});
-            // Format error response similar to Python version
-            const errorMessage = result_goodsmvt.RETURN[0].MESSAGE || 'Unknown error';
             return {
                 result: "N/A",
-                error: errorMessage
+                error: result_goodsmvt.RETURN[0].MESSAGE
             };
+        }
+        const materialDoc = result_goodsmvt.MATERIALDOCUMENT || result_goodsmvt.GOODSMVT_HEADRET?.MAT_DOC; 
+        await managed_client.call('BAPI_TRANSACTION_COMMIT', { WAIT: 'X' });
+        let sourceStorageType;
+        let sourceStorageBin;
+        let destStorageType;
+        let destStorageBin;
+
+        if (moveType === '711') {
+            sourceStorageType = issueStorageType;
+            sourceStorageBin = issueStorageBin;
+            destStorageType = '999';
+            destStorageBin = '0000000000';
         } else {
-            await managed_client.call('BAPI_TRANSACTION_COMMIT', {});
-            // Extract document number and format response
-            const documentNumber = result_goodsmvt.MATERIALDOCUMENT || result_goodsmvt.GOODSMVT_HEADRET?.MAT_DOC || '';
-            if (documentNumber) {
-                return { result: `Material document ${documentNumber} posted`, error: "N/A" };
-            } else {
-                return {result: "N/A", error: "Document created but document number not returned"};
-            }
+            sourceStorageType = '999';
+            sourceStorageBin = '0000000000';
+            destStorageType = issueStorageType;
+            destStorageBin = issueStorageBin;
         }
 
+        const toResult = await funcion.L_TO_CREATE_SINGLE({
+            I_BWLVS: 998,
+            I_WERKS: '5210',
+            I_LGNUM: '521',
+            I_LGORT: formattedStorageLoc,
+            I_ANFME: scrap_quantity,
+            I_ALTME: '',
+            I_MATNR: formattedMaterial,
+            I_VLTYP: sourceStorageType,
+            I_VLPLA: sourceStorageBin,
+            I_NLTYP: destStorageType,
+            I_NLPLA: destStorageBin
+        });
+        return {
+            result: `Material document ${materialDoc}, TO ${toResult.transfer_order_number}`,
+            error: "N/A"
+        };
     } catch (error) {
-        await createSapRfcPool.destroy(managed_client);
-        return {result: "N/A", error: error.message || String(error)};
+        if (managed_client) {
+            await managed_client.call('BAPI_TRANSACTION_ROLLBACK', {});
+        }
+        return {
+            result: "N/A",
+            error: error.message
+        };
     } finally {
-        setTimeout(() => { if (managed_client && managed_client.alive) { createSapRfcPool.release(managed_client) } }, 500);
+        if (managed_client && managed_client.alive) {
+            createSapRfcPool.release(managed_client);
+        }
     }
 };
+
 
 
 
